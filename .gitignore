@@ -1,0 +1,17 @@
+# Internal documents (NDA) — never commit
+/internal-docs/
+*.pdf
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Secrets
+.env
+
+# Data and artefacts
+data/
+artifacts/
