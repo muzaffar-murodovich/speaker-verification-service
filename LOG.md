@@ -18,3 +18,13 @@ Numbers live in `experiments.csv`; this file explains them.
   rejects rows with a missing column, a duplicate `run_id` or no trial count.
 - Code must be device-agnostic (cuda → mps → cpu): development is on a laptop,
   embedding extraction on the GPU node.
+
+## 2026-09-30 — D2: segment validation
+
+- Started the extraction pipeline with segment validation (SVS guide §3.2).
+  Boundaries are milliseconds, and intervals include the start but exclude the end.
+- Reject empty, non-finite, reversed, out-of-bounds, unordered or overlapping
+  segments. Adjacent segments are valid. Rejecting overlaps prevents counting the
+  same audio twice when pooling speech; guard tests cover these cases.
+- This is only the first step: audio decoding, sample-rate handling, VAD and speech
+  pooling are not implemented yet. No runtime dependency or measured result added.

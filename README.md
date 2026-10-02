@@ -4,7 +4,8 @@ A speaker verification (1:1) and identification (1:N) service built during the
 MohirDev internship: speech extraction, ECAPA-TDNN embeddings, calibrated scoring,
 speaker profiles and vector search.
 
-**Status:** D1, skeleton only. Progress and decisions are in [LOG.md](LOG.md).
+**Status:** D2 in progress: segment validation; audio loading and VAD are next.
+Progress and decisions are in [LOG.md](LOG.md).
 
 ## Quickstart
 
