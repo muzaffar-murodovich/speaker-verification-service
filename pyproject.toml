@@ -5,7 +5,7 @@ description = "Speaker verification service: embeddings, calibrated scoring, pro
 readme = "README.md"
 requires-python = ">=3.11"
 # Runtime dependencies are added on the day they are first used (numpy/soundfile on D2, torch on D3).
-dependencies = []
+dependencies = ["numpy>=1.26", "scipy>=1.11", "soundfile>=0.12", "webrtcvad-wheels>=2.0.14"]
 
 [dependency-groups]
 dev = [
