@@ -80,3 +80,11 @@ Numbers live in `experiments.csv`; this file explains them.
 - Each pair is emitted once (enrol < test by utt_id): cosine is symmetric, and both orders
   would double the trial count without adding information.
 - Both guards were mutation-checked: removing either one makes a test fail.
+
+## 2026-10-08 — D4: duration buckets
+
+- `duration_bucket()` maps net speech seconds to 3-10, 10-30, 30-120 and >120 s
+  (SVS guide §4.4, §8.3). Intervals are half-open, like segments in D2: 10.0 s is 10-30.
+- Below 3.0 s (`CFG_SV_MIN_SPEECH_SECONDS`) it raises instead of returning a bucket: the
+  service refuses to score such clips, so they must not enter the evaluation either.
+  NaN and infinity are rejected explicitly, because `NaN < 3.0` is false.

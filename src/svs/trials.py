@@ -1,9 +1,22 @@
 """Trial-list building. Target trials must be cross-session (SVS guide §8.1)."""
 
+import math
+from bisect import bisect_right
 from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from itertools import combinations
+
+MIN_SPEECH_SECONDS = 3.0  # CFG_SV_MIN_SPEECH_SECONDS: below this the service refuses to score.
+BUCKET_EDGES = (10.0, 30.0, 120.0)
+BUCKETS = ("3-10s", "10-30s", "30-120s", ">120s")  # SVS guide §4.4, §8.3
+
+
+def duration_bucket(seconds: float) -> str:
+    """Bucket of net speech seconds. Intervals are half-open: 10.0 s belongs to 10-30s."""
+    if not math.isfinite(seconds) or seconds < MIN_SPEECH_SECONDS:
+        raise ValueError(f"Speech duration must be finite and >= {MIN_SPEECH_SECONDS} s")
+    return BUCKETS[bisect_right(BUCKET_EDGES, seconds)]
 
 
 @dataclass(frozen=True)
