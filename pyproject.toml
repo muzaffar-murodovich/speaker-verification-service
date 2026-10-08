@@ -4,8 +4,15 @@ version = "0.1.0"
 description = "Speaker verification service: embeddings, calibrated scoring, profiles, 1:N search"
 readme = "README.md"
 requires-python = ">=3.11"
-# Runtime dependencies are added on the day they are first used (numpy/soundfile on D2, torch on D3).
-dependencies = ["numpy>=1.26", "scipy>=1.11", "soundfile>=0.12", "webrtcvad-wheels>=2.0.14"]
+# Runtime dependencies are added on the day they are first used (audio/VAD on D2, ONNX model on D3).
+dependencies = [
+    "kaldi-native-fbank>=1.22.3",
+    "numpy>=1.26",
+    "onnxruntime>=1.30.0",
+    "scipy>=1.11",
+    "soundfile>=0.12",
+    "webrtcvad-wheels>=2.0.14",
+]
 
 [dependency-groups]
 dev = [

@@ -49,3 +49,23 @@ Numbers live in `experiments.csv`; this file explains them.
   This is a functional check, not an accuracy benchmark or experiment result.
 - Added docs/audio-basics.md and a runnable API example. Codec encoders and
   degradation analysis remain D6 work. No measured verification metrics reported.
+
+## 2026-10-07 — D3: pretrained ECAPA-TDNN
+
+- Checkpoint: WeSpeaker `ECAPA_TDNN_GLOB_c512-ASTP-emb192`, large-margin fine-tuned,
+  ONNX export, Hugging Face revision pinned in the Makefile with a SHA-256 check.
+  Licence CC BY 4.0.
+- Why not SpeechBrain `spkrec-ecapa-voxceleb`: its model card says it was trained on
+  VoxCeleb1 + VoxCeleb2. Then 1,211 of the 1,251 VoxCeleb1 speakers were seen in
+  training, and an EER on them would be flattering. The WeSpeaker model was trained on
+  VoxCeleb2 dev only (its `run.sh` and `config.yaml`), so all VoxCeleb1 speakers are
+  unseen and M1's ≥ 1,000 speakers can come from VoxCeleb1.
+- Published reference for D5 (model card, LM, no AS-Norm): EER 0.878 % on
+  vox1-O-clean. This is their number, not ours.
+- Runtime: onnxruntime + kaldi-native-fbank instead of torch. Features follow
+  WeSpeaker's ONNX example: 80-bin fbank, 25/10 ms, hamming, no dither, int16 scale,
+  mean normalisation. One-off check on a 9 s synthetic clip: max fbank difference
+  to torchaudio's Kaldi fbank 5.4e-4, embedding cosine 1.0 (rounded). A functional
+  check, not an experiment.
+- Embeddings are L2-normalised where they are produced (SVS guide §4.1).
+  CUDA is used when onnxruntime-gpu provides it; otherwise CPU.
