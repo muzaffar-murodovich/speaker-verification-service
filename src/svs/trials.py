@@ -1,6 +1,7 @@
 """Trial-list building. Target trials must be cross-session (SVS guide §8.1)."""
 
 import math
+import random
 from bisect import bisect_right
 from collections import defaultdict
 from collections.abc import Iterable, Iterator
@@ -26,6 +27,7 @@ class Utterance:
     utt_id: str
     speaker: str
     session: str
+    gender: str
 
 
 @dataclass(frozen=True)
@@ -54,3 +56,32 @@ def target_trials(utterances: Iterable[Utterance]) -> Iterator[Trial]:
         for enrol, test in combinations(utts, 2):
             if enrol.session != test.session:
                 yield Trial(enrol, test)
+
+
+def nontarget_trials(utterances: Iterable[Utterance], n: int, seed: int = 0) -> list[Trial]:
+    """Sample n distinct pairs of different speakers of the same gender (SVS guide §8.1).
+
+    Cross-gender pairs are easy to reject and would make the EER look better than it is.
+    """
+    utts = sorted(utterances, key=lambda u: u.utt_id)
+    by_gender: dict[str, list[Utterance]] = defaultdict(list)
+    for utt in utts:
+        by_gender[utt.gender].append(utt)
+    rng = random.Random(seed)
+    seen: set[tuple[str, str]] = set()
+    trials: list[Trial] = []
+    for _ in range(100 * n):
+        if len(trials) == n:
+            break
+        enrol = rng.choice(utts)
+        test = rng.choice(by_gender[enrol.gender])
+        if enrol.speaker == test.speaker:
+            continue
+        enrol, test = sorted((enrol, test), key=lambda u: u.utt_id)
+        if (enrol.utt_id, test.utt_id) in seen:
+            continue
+        seen.add((enrol.utt_id, test.utt_id))
+        trials.append(Trial(enrol, test))
+    if len(trials) < n:
+        raise ValueError(f"Found only {len(trials)} distinct non-target pairs, need {n}")
+    return trials

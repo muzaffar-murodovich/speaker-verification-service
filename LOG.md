@@ -88,3 +88,14 @@ Numbers live in `experiments.csv`; this file explains them.
 - Below 3.0 s (`CFG_SV_MIN_SPEECH_SECONDS`) it raises instead of returning a bucket: the
   service refuses to score such clips, so they must not enter the evaluation either.
   NaN and infinity are rejected explicitly, because `NaN < 3.0` is false.
+
+## 2026-10-08 — D4: same-gender non-target trials
+
+- `nontarget_trials()` samples n distinct pairs of different speakers of the same gender
+  (SVS guide §8.1): cross-gender impostors are easy to reject and flatter the EER.
+  Enumerating all pairs is not possible at VoxCeleb scale, so pairs are drawn at random
+  with a fixed seed and rejected if same-speaker or already drawn. After 100·n attempts
+  it raises instead of looping forever or returning fewer trials than asked.
+- The enrol side is drawn uniformly over utterances, so the gender mix follows the data.
+- Deviation: the handbook also asks for same-language non-targets. VoxCeleb1 metadata
+  has nationality, not language, so language is not matched yet. To raise with the mentor.

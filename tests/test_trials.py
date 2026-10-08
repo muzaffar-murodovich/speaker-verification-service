@@ -2,14 +2,20 @@
 
 import pytest
 
-from svs.trials import Trial, Utterance, duration_bucket, target_trials
+from svs.trials import Trial, Utterance, duration_bucket, nontarget_trials, target_trials
 
 # Speaker A has two utterances in video v1 and one in v2; speaker B has one session only.
-A1 = Utterance("a1", speaker="A", session="v1")
-A2 = Utterance("a2", speaker="A", session="v1")
-A3 = Utterance("a3", speaker="A", session="v2")
-B1 = Utterance("b1", speaker="B", session="v3")
-B2 = Utterance("b2", speaker="B", session="v3")
+# A and B are male, C and D are female.
+A1 = Utterance("a1", speaker="A", session="v1", gender="m")
+A2 = Utterance("a2", speaker="A", session="v1", gender="m")
+A3 = Utterance("a3", speaker="A", session="v2", gender="m")
+B1 = Utterance("b1", speaker="B", session="v3", gender="m")
+B2 = Utterance("b2", speaker="B", session="v3", gender="m")
+C1 = Utterance("c1", speaker="C", session="v4", gender="f")
+D1 = Utterance("d1", speaker="D", session="v5", gender="f")
+ALL = [A1, A2, A3, B1, B2, C1, D1]
+# Same gender, different speaker: 3 x 2 male pairs and 1 female pair.
+NONTARGET_PAIRS = {(a, b) for a in ("a1", "a2", "a3") for b in ("b1", "b2")} | {("c1", "d1")}
 
 
 def test_trial_rejects_same_session_target():
@@ -48,3 +54,18 @@ def test_duration_bucket_edges(seconds, bucket):
 def test_duration_bucket_refuses_short_or_invalid(seconds):
     with pytest.raises(ValueError):
         duration_bucket(seconds)
+
+
+def test_nontarget_trials_are_exactly_the_same_gender_pairs():
+    trials = nontarget_trials(ALL, n=len(NONTARGET_PAIRS))
+    assert {(t.enrol.utt_id, t.test.utt_id) for t in trials} == NONTARGET_PAIRS
+    assert len(trials) == len(NONTARGET_PAIRS)
+
+
+def test_nontarget_trials_are_reproducible_with_a_seed():
+    assert nontarget_trials(ALL, n=4, seed=7) == nontarget_trials(ALL, n=4, seed=7)
+
+
+def test_nontarget_trials_refuse_more_pairs_than_exist():
+    with pytest.raises(ValueError, match="only"):
+        nontarget_trials(ALL, n=len(NONTARGET_PAIRS) + 1)
