@@ -69,3 +69,14 @@ Numbers live in `experiments.csv`; this file explains them.
   check, not an experiment.
 - Embeddings are L2-normalised where they are produced (SVS guide §4.1).
   CUDA is used when onnxruntime-gpu provides it; otherwise CPU.
+
+## 2026-10-08 — D4: same-session guard
+
+- VoxCeleb1 audio is not available yet, so the trial builder is written and tested on
+  small fake metadata first.
+- A session is the recording source; for VoxCeleb it is the video id. `Trial` refuses
+  to exist when both sides are the same speaker from the same session (SVS guide §8.1,
+  pitfall #1). `target_trials` also skips those pairs, so the generator never trips the guard.
+- Each pair is emitted once (enrol < test by utt_id): cosine is symmetric, and both orders
+  would double the trial count without adding information.
+- Both guards were mutation-checked: removing either one makes a test fail.
