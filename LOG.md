@@ -128,3 +128,6 @@ Numbers live in `experiments.csv`; this file explains them.
   `vox1_meta.csv` has no official checksum; its hash was recorded at download time.
 - `make data` downloads with resume, checks `voxceleb1.sha256`, and unpacks to
   `data/voxceleb1/wav`. Metadata: 1,251 speakers (690 m, 561 f).
+- Unpacked and counted on 2026-10-09: 1,251 speaker folders (identical to the ids in
+  `vox1_meta.csv`), 22,496 videos, 153,516 wav files, 38 GB. Layout is
+  `wav/<speaker>/<video>/<clip>.wav`; a sampled file is mono, 16 kHz, 16-bit PCM.
