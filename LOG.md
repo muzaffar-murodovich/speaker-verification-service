@@ -115,3 +115,16 @@ Numbers live in `experiments.csv`; this file explains them.
   it depends on the data layout and needs the mentor's agreement.
 - D4 status: the builder is complete and tested on fake metadata. No trial list over
   real data exists yet, so M1's 100 000-trial count is not met.
+
+## 2026-10-09 — Data: VoxCeleb1
+
+- The official VoxCeleb server now requires credentials (HTTP 401). The mentor allowed
+  downloading public data from the internet. VoxCeleb1 is kept because the published
+  reference EER for our checkpoint is on VoxCeleb1, and none of its speakers were in
+  the checkpoint's training data.
+- Source: Hugging Face mirror `ProgramComputer/voxceleb`, revision pinned in the
+  Makefile. The SHA-256 of every audio archive equals the official checksum that
+  torchaudio's VoxCeleb1 loader uses, so the files are the original Oxford archives.
+  `vox1_meta.csv` has no official checksum; its hash was recorded at download time.
+- `make data` downloads with resume, checks `voxceleb1.sha256`, and unpacks to
+  `data/voxceleb1/wav`. Metadata: 1,251 speakers (690 m, 561 f).
