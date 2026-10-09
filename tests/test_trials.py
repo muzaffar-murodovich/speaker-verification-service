@@ -2,17 +2,24 @@
 
 import pytest
 
-from svs.trials import Trial, Utterance, duration_bucket, nontarget_trials, target_trials
+from svs.trials import (
+    Trial,
+    Utterance,
+    duration_bucket,
+    nontarget_trials,
+    target_trials,
+    write_trials,
+)
 
 # Speaker A has two utterances in video v1 and one in v2; speaker B has one session only.
-# A and B are male, C and D are female.
-A1 = Utterance("a1", speaker="A", session="v1", gender="m")
-A2 = Utterance("a2", speaker="A", session="v1", gender="m")
-A3 = Utterance("a3", speaker="A", session="v2", gender="m")
-B1 = Utterance("b1", speaker="B", session="v3", gender="m")
-B2 = Utterance("b2", speaker="B", session="v3", gender="m")
-C1 = Utterance("c1", speaker="C", session="v4", gender="f")
-D1 = Utterance("d1", speaker="D", session="v5", gender="f")
+# A and B are male, C and D are female. Durations are net speech seconds.
+A1 = Utterance("a1", speaker="A", session="v1", gender="m", duration=8.0)
+A2 = Utterance("a2", speaker="A", session="v1", gender="m", duration=12.0)
+A3 = Utterance("a3", speaker="A", session="v2", gender="m", duration=45.0)
+B1 = Utterance("b1", speaker="B", session="v3", gender="m", duration=150.0)
+B2 = Utterance("b2", speaker="B", session="v3", gender="m", duration=20.0)
+C1 = Utterance("c1", speaker="C", session="v4", gender="f", duration=5.0)
+D1 = Utterance("d1", speaker="D", session="v5", gender="f", duration=35.0)
 ALL = [A1, A2, A3, B1, B2, C1, D1]
 # Same gender, different speaker: 3 x 2 male pairs and 1 female pair.
 NONTARGET_PAIRS = {(a, b) for a in ("a1", "a2", "a3") for b in ("b1", "b2")} | {("c1", "d1")}
@@ -69,3 +76,24 @@ def test_nontarget_trials_are_reproducible_with_a_seed():
 def test_nontarget_trials_refuse_more_pairs_than_exist():
     with pytest.raises(ValueError, match="only"):
         nontarget_trials(ALL, n=len(NONTARGET_PAIRS) + 1)
+
+
+def test_trial_bucket_is_decided_by_the_shorter_clip():
+    assert Trial(A1, A3).bucket == "3-10s"  # 8 s and 45 s
+    assert Trial(A3, B1).bucket == "30-120s"  # 45 s and 150 s
+
+
+def test_trial_rejects_a_clip_below_the_minimum():
+    short = Utterance("e1", speaker="E", session="v6", gender="m", duration=2.5)
+    with pytest.raises(ValueError):
+        Trial(A1, short)
+
+
+def test_write_trials_writes_a_header_and_one_row_per_trial(tmp_path):
+    path = tmp_path / "trials.tsv"
+    assert write_trials(path, [Trial(A1, A3), Trial(A3, B1)]) == 2
+    assert path.read_text().splitlines() == [
+        "enrol\ttest\ttarget\tbucket",
+        "a1\ta3\t1\t3-10s",
+        "a3\tb1\t0\t30-120s",
+    ]

@@ -99,3 +99,19 @@ Numbers live in `experiments.csv`; this file explains them.
 - The enrol side is drawn uniformly over utterances, so the gender mix follows the data.
 - Deviation: the handbook also asks for same-language non-targets. VoxCeleb1 metadata
   has nationality, not language, so language is not matched yet. To raise with the mentor.
+
+## 2026-10-09 — D4: trial buckets and the trial-list file
+
+- A trial's duration bucket is the bucket of its shorter clip. The shorter side limits
+  how much the comparison can tell, and in the service the weak side is always the new
+  occurrence while the enrolled side is a long profile. Both orders of a pair give the
+  same bucket. To confirm with the mentor.
+- `Trial` refuses a clip below 3.0 s, so no trial list can contain one.
+- `write_trials()` writes a tab-separated list: enrol, test, target (1/0), bucket.
+- Open problem: VoxCeleb1 clips are short (about 8 s on average per the dataset paper;
+  to be measured on our copy). With one clip per side, the 30-120 s and >120 s buckets
+  will be nearly empty. A likely fix is to join clips from the same video into longer
+  clips; they stay one session, so the same-session guard still applies. Not built yet:
+  it depends on the data layout and needs the mentor's agreement.
+- D4 status: the builder is complete and tested on fake metadata. No trial list over
+  real data exists yet, so M1's 100 000-trial count is not met.

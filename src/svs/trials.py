@@ -1,5 +1,6 @@
 """Trial-list building. Target trials must be cross-session (SVS guide §8.1)."""
 
+import csv
 import math
 import random
 from bisect import bisect_right
@@ -7,6 +8,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from itertools import combinations
+from pathlib import Path
 
 MIN_SPEECH_SECONDS = 3.0  # CFG_SV_MIN_SPEECH_SECONDS: below this the service refuses to score.
 BUCKET_EDGES = (10.0, 30.0, 120.0)
@@ -22,12 +24,16 @@ def duration_bucket(seconds: float) -> str:
 
 @dataclass(frozen=True)
 class Utterance:
-    """One recording. session is the recording source; for VoxCeleb it is the video id."""
+    """One recording. session is the recording source; for VoxCeleb it is the video id.
+
+    duration is net speech seconds after VAD, the quantity the buckets refer to.
+    """
 
     utt_id: str
     speaker: str
     session: str
     gender: str
+    duration: float
 
 
 @dataclass(frozen=True)
@@ -40,10 +46,18 @@ class Trial:
         # similarity, not speaker similarity (handbook pitfall #1).
         if self.is_target and self.enrol.session == self.test.session:
             raise ValueError(f"Same-session target trial: {self.enrol.utt_id}, {self.test.utt_id}")
+        for utt in (self.enrol, self.test):
+            if utt.duration < MIN_SPEECH_SECONDS:
+                raise ValueError(f"Clip below {MIN_SPEECH_SECONDS} s: {utt.utt_id}")
 
     @property
     def is_target(self) -> bool:
         return self.enrol.speaker == self.test.speaker
+
+    @property
+    def bucket(self) -> str:
+        """The weaker side decides: a trial is as short as its shorter clip."""
+        return duration_bucket(min(self.enrol.duration, self.test.duration))
 
 
 def target_trials(utterances: Iterable[Utterance]) -> Iterator[Trial]:
@@ -85,3 +99,15 @@ def nontarget_trials(utterances: Iterable[Utterance], n: int, seed: int = 0) -> 
     if len(trials) < n:
         raise ValueError(f"Found only {len(trials)} distinct non-target pairs, need {n}")
     return trials
+
+
+def write_trials(path: str | Path, trials: Iterable[Trial]) -> int:
+    """Write a tab-separated trial list with a header; return the number of trials."""
+    count = 0
+    with open(path, "w", newline="") as f:
+        writer = csv.writer(f, delimiter="\t", lineterminator="\n")
+        writer.writerow(["enrol", "test", "target", "bucket"])
+        for t in trials:
+            writer.writerow([t.enrol.utt_id, t.test.utt_id, int(t.is_target), t.bucket])
+            count += 1
+    return count
