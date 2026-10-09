@@ -27,7 +27,7 @@ VOX_FILES := $(shell awk '{print $$2}' voxceleb1.sha256)
 data: ## Download VoxCeleb1 (~34 GB), verify checksums, unpack to data/voxceleb1/wav
 	mkdir -p $(VOX_DIR)/archives
 	for f in $(VOX_FILES); do \
-		curl -fL -C - -o $(VOX_DIR)/archives/$$f $(VOX_URL)/$$f || exit 1; \
+		curl -fL -C - --retry 20 --retry-all-errors --retry-delay 10 -o $(VOX_DIR)/archives/$$f $(VOX_URL)/$$f || exit 1; \
 	done
 	cd $(VOX_DIR)/archives && shasum -a 256 -c $(CURDIR)/voxceleb1.sha256
 	test -f $(VOX_DIR)/.unpacked || ( \
