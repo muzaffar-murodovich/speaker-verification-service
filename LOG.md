@@ -131,3 +131,16 @@ Numbers live in `experiments.csv`; this file explains them.
 - Unpacked and counted on 2026-10-09: 1,251 speaker folders (identical to the ids in
   `vox1_meta.csv`), 22,496 videos, 153,516 wav files, 38 GB. Layout is
   `wav/<speaker>/<video>/<clip>.wav`; a sampled file is mono, 16 kHz, 16-bit PCM.
+
+## 2026-10-12 — VoxCeleb1 catalogue
+
+- `list_clips()` turns `wav/<speaker>/<video>/<clip>.wav` plus `vox1_meta.csv` into
+  clips with speaker, session (video id) and gender. It reads paths only, not audio.
+- utt_id keeps the video: clip names restart at 00001 in every video, so without it
+  clips of one speaker from different videos would share an id.
+- A speaker without gender in the metadata is an error, not a silent skip: it would
+  otherwise drop out of same-gender non-target sampling unnoticed.
+- Duration is not in the catalogue. Net speech seconds come from VAD when embeddings are
+  computed, and only then does a clip become an `Utterance` with a duration bucket.
+- Run on our copy: 153,516 clips with unique ids, 1,251 speakers, 22,496 videos;
+  90,450 clips from male and 63,066 from female speakers.

@@ -1,0 +1,36 @@
+"""VoxCeleb1 catalogue: wav/<speaker>/<video>/<clip>.wav plus the tab-separated vox1_meta.csv."""
+
+import csv
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class Clip:
+    """One wav file. Duration is not known here; it comes from VAD at embedding time."""
+
+    utt_id: str  # <speaker>/<video>/<clip>: clip names repeat across videos.
+    speaker: str
+    session: str  # The YouTube video id.
+    gender: str
+
+
+def read_genders(meta_csv: str | Path) -> dict[str, str]:
+    with open(meta_csv, newline="") as f:
+        rows = csv.DictReader(f, delimiter="\t")
+        return {row["VoxCeleb1 ID"]: row["Gender"] for row in rows}
+
+
+def list_clips(wav_dir: str | Path, meta_csv: str | Path) -> list[Clip]:
+    """Every wav file under wav_dir, sorted by utt_id. Reads paths only, not audio."""
+    wav_dir = Path(wav_dir)
+    genders = read_genders(meta_csv)
+    clips = []
+    for path in sorted(wav_dir.glob("*/*/*.wav")):
+        speaker, session, name = path.relative_to(wav_dir).with_suffix("").parts
+        if genders.get(speaker) not in ("m", "f"):
+            raise ValueError(f"No gender in metadata for speaker {speaker}")
+        clips.append(Clip(f"{speaker}/{session}/{name}", speaker, session, genders[speaker]))
+    if not clips:
+        raise ValueError(f"No wav files under {wav_dir}")
+    return clips
