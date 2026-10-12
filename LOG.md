@@ -144,3 +144,18 @@ Numbers live in `experiments.csv`; this file explains them.
   computed, and only then does a clip become an `Utterance` with a duration bucket.
 - Run on our copy: 153,516 clips with unique ids, 1,251 speakers, 22,496 videos;
   90,450 clips from male and 63,066 from female speakers.
+
+## 2026-10-12 — Embedding cache
+
+- `make embeddings` runs VAD and the model on every VoxCeleb1 clip once. It writes
+  `artifacts/embeddings/voxceleb1/<speaker>.npz` with utt_ids, net speech seconds and
+  192-dim embeddings. Trials and scores later read this cache instead of the audio.
+- Net speech seconds are kept for every clip, so dropped clips can be counted. Clips
+  under 3.0 s of speech get a NaN embedding: the service would refuse them, and NaN
+  makes any accidental use visible as a NaN score.
+- One file per speaker, written only after all its clips are done. An interrupted run
+  leaves no partial file, and a rerun continues with the missing speakers.
+- Speed probe before the full run (throwaway script, not committed): 100 random clips
+  (seed 0) on Mac CPU, one thread, 38 ms per clip; 83 % of the time is the model,
+  not VAD. Projected full run about 1.6 h. This is an estimate; the real duration is
+  logged after the run.
