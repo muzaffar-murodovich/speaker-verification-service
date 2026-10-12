@@ -156,6 +156,11 @@ Numbers live in `experiments.csv`; this file explains them.
 - One file per speaker, written only after all its clips are done. An interrupted run
   leaves no partial file, and a rerun continues with the missing speakers.
 - Speed probe before the full run (throwaway script, not committed): 100 random clips
-  (seed 0) on Mac CPU, one thread, 38 ms per clip; 83 % of the time is the model,
-  not VAD. Projected full run about 1.6 h. This is an estimate; the real duration is
-  logged after the run.
+  (seed 0) on the Mac (Apple M3), one process, 38 ms per clip; 83 % of the time is the
+  model, not VAD. onnxruntime spreads the model over several CPU cores by default.
+  Projected full run about 1.6 h. This is an estimate; the real duration is logged
+  after the run.
+- The Mac overheated during the full run, so the run moved to a home Linux PC
+  (Intel i5-1235U, no GPU). The same 100 clips: 46.9 ms per clip there, 35.2 ms on a
+  second Mac run. Both machines gave the same audio and net speech totals, so they
+  read the same files and VAD agreed.
