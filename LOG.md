@@ -164,3 +164,24 @@ Numbers live in `experiments.csv`; this file explains them.
   (Intel i5-1235U, no GPU). The same 100 clips: 46.9 ms per clip there, 35.2 ms on a
   second Mac run. Both machines gave the same audio and net speech totals, so they
   read the same files and VAD agreed.
+
+## 2026-10-13 — Embedding cache: full VoxCeleb1 run
+
+- `make embeddings` ran on the home Linux PC (commit 4df7274): 1,251 speaker files,
+  0 errors in the log, 12,487 s wall time (about 3.5 h). The 100-clip probe projected
+  2.0 h for this machine, so the probe underestimated by about 1.7×. The cause was not
+  measured.
+- Cross-machine check: the 145 speakers the Mac finished before it was stopped were
+  compared with the home files. Same utt_ids, same net seconds (max difference 0.0),
+  same NaN rows, and every cosine between the two embeddings of a clip rounds to
+  1.000000 (17,348 embeddings).
+- Cache: 153,516 clips, all ids unique. 1,342 clips have under 3.0 s of speech and get
+  NaN embeddings (NaN rows = 1,342, the same set). 152,174 clips remain, from all 1,251
+  speakers and 22,398 of 22,496 videos. Per speaker: 43 to 995 clips, median 101.
+  89,629 clips from male and 62,545 from female speakers.
+- Net speech over all clips: median 5.86 s, 90th percentile 13.16 s, max 134.70 s.
+- Kept clips per bucket: 3-10s 123,282; 10-30s 27,815; 30-120s 1,076; >120s 1.
+  With single clips, the two long buckets are close to empty (open item 3).
+- If the kept clips of each video were joined: 3-10s 5,497; 10-30s 6,501;
+  30-120s 8,204; >120s 2,196 videos. Joining is not built; it is the candidate fix for
+  open item 3.
