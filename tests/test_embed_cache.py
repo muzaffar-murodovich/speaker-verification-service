@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
+from svs import embed_cache
 from svs.embed import EMBEDDING_DIM
 from svs.embed_cache import embed_all, read_cache
 
@@ -16,11 +17,13 @@ class FakeEmbedder:
     def __init__(self, fail_after: int | None = None) -> None:
         self.calls = 0
         self.fail_after = fail_after
+        self.lengths: list[int] = []
 
     def embed(self, samples):
         if self.calls == self.fail_after:
             raise RuntimeError("interrupted")
         self.calls += 1
+        self.lengths.append(len(samples))
         return np.ones(EMBEDDING_DIM, np.float32) / np.sqrt(EMBEDDING_DIM)
 
 
@@ -79,3 +82,26 @@ def test_read_cache_joins_all_speaker_files_in_order(tmp_path):
     assert list(utt_ids) == ["id1/v1/00001", "id1/v1/00002", "id2/v1/00001"]
     np.testing.assert_allclose(seconds, [4.0, 0.0, 4.0])
     assert embeddings.shape == (3, EMBEDDING_DIM)
+
+
+def test_join_videos_gives_one_embedding_per_video_from_all_its_speech(tmp_path):
+    clips = {"id1/v1/00001": "speech", "id1/v1/00002": "speech", "id1/v2/00001": "silence"}
+    wav, meta = make_tree(tmp_path, clips)
+    embedder = FakeEmbedder()
+    embed_all(embedder, wav, meta, tmp_path / "out", join_videos=True)
+
+    cache = np.load(tmp_path / "out" / "id1.npz")
+    assert list(cache["utt_ids"]) == ["id1/v1", "id1/v2"]
+    np.testing.assert_allclose(cache["net_seconds"], [8.0, 0.0])
+    assert embedder.lengths == [8 * 16000]
+    assert np.isnan(cache["embeddings"][1]).all()
+
+
+def test_speech_beyond_the_maximum_is_cut_and_not_counted(tmp_path, monkeypatch):
+    monkeypatch.setattr(embed_cache, "MAX_SPEECH_SECONDS", 5.0)
+    wav, meta = make_tree(tmp_path, {"id1/v1/00001": "speech", "id1/v1/00002": "speech"})
+    embedder = FakeEmbedder()
+    embed_all(embedder, wav, meta, tmp_path / "out", join_videos=True)
+
+    assert embedder.lengths == [5 * 16000]
+    np.testing.assert_allclose(np.load(tmp_path / "out" / "id1.npz")["net_seconds"], [5.0])

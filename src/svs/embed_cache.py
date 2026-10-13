@@ -1,6 +1,6 @@
-"""Embed every VoxCeleb1 clip once and cache the result, one .npz file per speaker."""
+"""Embed every VoxCeleb1 clip (or video) once and cache the result, one .npz per speaker."""
 
-import sys
+import argparse
 import time
 from itertools import groupby
 from pathlib import Path
@@ -10,28 +10,45 @@ import soundfile as sf
 from numpy.typing import NDArray
 
 from svs.embed import EMBEDDING_DIM, Embedder
-from svs.extract import extract_speech
+from svs.extract import SAMPLE_RATE, extract_speech
 from svs.trials import MIN_SPEECH_SECONDS
 from svs.voxceleb import list_clips
 
+# Model memory grows with length: 1.67 GB at 300 s, 8.13 GB at 1718 s (Mac, 2026-10-13).
+# 300 s keeps the >120s bucket and fits the 7 GB home PC. A plain choice, not tuned.
+MAX_SPEECH_SECONDS = 300.0
 
-def embed_clip(embedder: Embedder, path: str | Path) -> tuple[float, NDArray[np.float32]]:
-    """Net speech seconds for the whole file, and its embedding (NaN below the 3 s minimum).
 
+def embed_clips(embedder: Embedder, paths: list[Path]) -> tuple[float, NDArray[np.float32]]:
+    """Pooled net speech of clips from one session, and one embedding for all of it.
+
+    VAD runs per clip, so the gaps between clips never count as speech. Speech beyond
+    MAX_SPEECH_SECONDS is cut off; the seconds returned are what the model saw.
     The service refuses to score less than MIN_SPEECH_SECONDS of speech, so no embedding
     is computed for it. NaN makes any accidental use of the row visible as a NaN score.
     """
-    info = sf.info(str(path))
-    speech = extract_speech(path, [(0, info.frames * 1000 / info.samplerate)])
-    if speech.net_speech_seconds < MIN_SPEECH_SECONDS:
-        return speech.net_speech_seconds, np.full(EMBEDDING_DIM, np.nan, np.float32)
-    return speech.net_speech_seconds, embedder.embed(speech.samples)
+    speech = []
+    for path in paths:
+        info = sf.info(str(path))
+        speech.append(extract_speech(path, [(0, info.frames * 1000 / info.samplerate)]).samples)
+    samples = np.concatenate(speech)[: int(MAX_SPEECH_SECONDS * SAMPLE_RATE)]
+    seconds = len(samples) / SAMPLE_RATE
+    if seconds < MIN_SPEECH_SECONDS:
+        return seconds, np.full(EMBEDDING_DIM, np.nan, np.float32)
+    return seconds, embedder.embed(samples)
 
 
 def embed_all(
-    embedder: Embedder, wav_dir: str | Path, meta_csv: str | Path, out_dir: str | Path
+    embedder: Embedder,
+    wav_dir: str | Path,
+    meta_csv: str | Path,
+    out_dir: str | Path,
+    join_videos: bool = False,
 ) -> int:
     """Write <out_dir>/<speaker>.npz for each speaker without a file; return how many.
+
+    With join_videos, all clips of a video become one unit with id <speaker>/<video>.
+    A video is one session, so joining never mixes sessions.
 
     A speaker's file is written only after all its clips are embedded, so an interrupted
     run never leaves a partial file, and a rerun continues with the missing speakers.
@@ -45,15 +62,22 @@ def embed_all(
         if path.exists():
             continue
         clips = list(group)
-        results = [embed_clip(embedder, wav_dir / f"{c.utt_id}.wav") for c in clips]
+        if join_videos:
+            videos = groupby(clips, key=lambda c: c.session)
+            units = [(f"{speaker}/{video}", list(unit)) for video, unit in videos]
+        else:
+            units = [(c.utt_id, [c]) for c in clips]
+        results = [
+            embed_clips(embedder, [wav_dir / f"{c.utt_id}.wav" for c in unit]) for _, unit in units
+        ]
         np.savez(
             path,
-            utt_ids=np.array([c.utt_id for c in clips]),
+            utt_ids=np.array([unit_id for unit_id, _ in units]),
             net_seconds=np.array([seconds for seconds, _ in results]),
             embeddings=np.stack([embedding for _, embedding in results]),
         )
         written += 1
-        print(f"{speaker}: {len(clips)} clips", flush=True)
+        print(f"{speaker}: {len(units)} {'videos' if join_videos else 'clips'}", flush=True)
     return written
 
 
@@ -70,7 +94,12 @@ def read_cache(
 
 
 if __name__ == "__main__":
-    wav_dir, meta_csv, out_dir = sys.argv[1:]
+    parser = argparse.ArgumentParser()
+    parser.add_argument("wav_dir")
+    parser.add_argument("meta_csv")
+    parser.add_argument("out_dir")
+    parser.add_argument("--join-videos", action="store_true", help="one embedding per video")
+    args = parser.parse_args()
     start = time.perf_counter()
-    written = embed_all(Embedder(), wav_dir, meta_csv, out_dir)
+    written = embed_all(Embedder(), args.wav_dir, args.meta_csv, args.out_dir, args.join_videos)
     print(f"Wrote {written} speaker files in {time.perf_counter() - start:.0f} s")

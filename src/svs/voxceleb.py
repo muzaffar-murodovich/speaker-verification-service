@@ -44,12 +44,13 @@ def utterances(
 ) -> list[Utterance]:
     """Clips with at least MIN_SPEECH_SECONDS of net speech; shorter clips are left out.
 
-    Speaker and session come from the utt_id, so no audio or wav tree is needed.
+    Speaker and session come from the utt_id (<speaker>/<video>[/<clip>]), so no audio
+    or wav tree is needed. A joined video has no clip part.
     """
     utts = []
     for utt_id, seconds in zip(utt_ids, net_seconds, strict=True):
         if seconds < MIN_SPEECH_SECONDS:
             continue
-        speaker, session, _ = utt_id.split("/")
+        speaker, session = utt_id.split("/")[:2]
         utts.append(Utterance(utt_id, speaker, session, genders[speaker], float(seconds)))
     return utts

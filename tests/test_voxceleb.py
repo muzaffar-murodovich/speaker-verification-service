@@ -50,3 +50,8 @@ def test_utterances_leave_out_clips_below_three_seconds():
         Utterance("id1/v2/00001", speaker="id1", session="v2", gender="m", duration=3.0),
         Utterance("id2/v1/00001", speaker="id2", session="v1", gender="f", duration=7.5),
     ]
+
+
+def test_utterances_accept_joined_video_ids():
+    utts = utterances(["id1/v1", "id1/v2"], [130.0, 2.0], {"id1": "m"})
+    assert utts == [Utterance("id1/v1", speaker="id1", session="v1", gender="m", duration=130.0)]
