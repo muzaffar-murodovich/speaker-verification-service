@@ -2,7 +2,8 @@
 
 import pytest
 
-from svs.voxceleb import Clip, list_clips
+from svs.trials import Utterance
+from svs.voxceleb import Clip, list_clips, utterances
 
 META_HEADER = "VoxCeleb1 ID\tVGGFace1 ID\tGender\tNationality\tSet\n"
 
@@ -39,3 +40,13 @@ def test_list_clips_rejects_an_empty_tree(tmp_path):
     wav.mkdir()
     with pytest.raises(ValueError, match="No wav"):
         list_clips(wav, meta)
+
+
+def test_utterances_leave_out_clips_below_three_seconds():
+    utts = utterances(
+        ["id1/v1/00001", "id1/v2/00001", "id2/v1/00001"], [2.99, 3.0, 7.5], {"id1": "m", "id2": "f"}
+    )
+    assert utts == [
+        Utterance("id1/v2/00001", speaker="id1", session="v2", gender="m", duration=3.0),
+        Utterance("id2/v1/00001", speaker="id2", session="v1", gender="f", duration=7.5),
+    ]

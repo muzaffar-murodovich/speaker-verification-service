@@ -57,6 +57,18 @@ def embed_all(
     return written
 
 
+def read_cache(
+    cache_dir: str | Path,
+) -> tuple[NDArray[np.str_], NDArray[np.float64], NDArray[np.float32]]:
+    """utt_ids, net speech seconds and embeddings of every speaker file, in speaker order."""
+    files = sorted(Path(cache_dir).glob("*.npz"))
+    if not files:
+        raise ValueError(f"No speaker files in {cache_dir}")
+    parts = [np.load(f) for f in files]
+    keys = ("utt_ids", "net_seconds", "embeddings")
+    return tuple(np.concatenate([p[key] for p in parts]) for key in keys)
+
+
 if __name__ == "__main__":
     wav_dir, meta_csv, out_dir = sys.argv[1:]
     start = time.perf_counter()

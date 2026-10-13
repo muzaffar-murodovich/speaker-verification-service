@@ -1,8 +1,11 @@
 """VoxCeleb1 catalogue: wav/<speaker>/<video>/<clip>.wav plus the tab-separated vox1_meta.csv."""
 
 import csv
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+
+from svs.trials import MIN_SPEECH_SECONDS, Utterance
 
 
 @dataclass(frozen=True)
@@ -34,3 +37,19 @@ def list_clips(wav_dir: str | Path, meta_csv: str | Path) -> list[Clip]:
     if not clips:
         raise ValueError(f"No wav files under {wav_dir}")
     return clips
+
+
+def utterances(
+    utt_ids: Iterable[str], net_seconds: Iterable[float], genders: dict[str, str]
+) -> list[Utterance]:
+    """Clips with at least MIN_SPEECH_SECONDS of net speech; shorter clips are left out.
+
+    Speaker and session come from the utt_id, so no audio or wav tree is needed.
+    """
+    utts = []
+    for utt_id, seconds in zip(utt_ids, net_seconds, strict=True):
+        if seconds < MIN_SPEECH_SECONDS:
+            continue
+        speaker, session, _ = utt_id.split("/")
+        utts.append(Utterance(utt_id, speaker, session, genders[speaker], float(seconds)))
+    return utts

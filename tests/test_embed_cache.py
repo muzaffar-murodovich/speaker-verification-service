@@ -5,7 +5,7 @@ import pytest
 import soundfile as sf
 
 from svs.embed import EMBEDDING_DIM
-from svs.embed_cache import embed_all
+from svs.embed_cache import embed_all, read_cache
 
 META_HEADER = "VoxCeleb1 ID\tVGGFace1 ID\tGender\tNationality\tSet\n"
 
@@ -67,3 +67,15 @@ def test_interrupted_speaker_leaves_no_file(tmp_path):
     with pytest.raises(RuntimeError):
         embed_all(FakeEmbedder(fail_after=1), wav, meta, tmp_path / "out")
     assert not (tmp_path / "out" / "id1.npz").exists()
+
+
+def test_read_cache_joins_all_speaker_files_in_order(tmp_path):
+    wav, meta = make_tree(
+        tmp_path, {"id2/v1/00001": "speech", "id1/v1/00001": "speech", "id1/v1/00002": "silence"}
+    )
+    embed_all(FakeEmbedder(), wav, meta, tmp_path / "out")
+
+    utt_ids, seconds, embeddings = read_cache(tmp_path / "out")
+    assert list(utt_ids) == ["id1/v1/00001", "id1/v1/00002", "id2/v1/00001"]
+    np.testing.assert_allclose(seconds, [4.0, 0.0, 4.0])
+    assert embeddings.shape == (3, EMBEDDING_DIM)
