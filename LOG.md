@@ -185,3 +185,25 @@ Numbers live in `experiments.csv`; this file explains them.
 - If the kept clips of each video were joined: 3-10s 5,497; 10-30s 6,501;
   30-120s 8,204; >120s 2,196 videos. Joining is not built; it is the candidate fix for
   open item 3.
+
+## 2026-10-14 — Embedding cache: one embedding per video
+
+- Long buckets were close to empty with single clips (see 2026-10-13), so each video's
+  clips are joined: VAD runs per clip, the speech is concatenated and embedded once.
+  A video is one session, so joining never mixes sessions. Averaging clip embeddings
+  was rejected: the model would never hear the long audio the bucket names.
+- Speech is capped at 300 s per video. Measured on the Mac with one model call: peak
+  memory 0.85 GB at 120 s, 1.67 GB at 300 s, 8.13 GB at 1,718 s (the longest video).
+  The home PC has 7 GB. 300 s is a plain choice, not tuned; the cached seconds are what
+  the model saw.
+- Missed step: raw file sizes (1.8 s to read) already showed one clip over 120 s and a
+  1,940 s longest video. Checking them first would have settled joining and the cap
+  before the first run.
+- `make embeddings-videos` ran on the home PC (commit 6102634): 1,251 speaker files,
+  0 errors, 11,550 s wall time.
+- Checks: 22,496 videos, the same set as in the clip cache. Each video's seconds equal
+  the sum of its clips' seconds, capped at 300 s (max difference 1.1e-13). 356 videos
+  hit the cap. 92 videos have under 3.0 s of speech and get NaN rows.
+- Kept videos per bucket: 3-10s 5,464; 10-30s 6,509; 30-120s 8,230; >120s 2,201.
+  These differ slightly from the 2026-10-13 estimate, which summed only clips of 3 s
+  or more and had no cap. All 1,251 speakers keep 7 to 36 videos (median 17).
