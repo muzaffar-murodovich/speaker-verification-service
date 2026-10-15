@@ -7,6 +7,7 @@ from svs.trials import (
     Utterance,
     duration_bucket,
     nontarget_trials,
+    sample_target_trials,
     target_trials,
     write_trials,
 )
@@ -97,3 +98,40 @@ def test_write_trials_writes_a_header_and_one_row_per_trial(tmp_path):
         "a1\ta3\t1\t3-10s",
         "a3\tb1\t0\t30-120s",
     ]
+
+
+def test_sampled_target_trials_stay_in_their_bucket():
+    # Cross-session pairs: a1-a3 (8 s, 45 s) is 3-10s, a2-a3 (12 s, 45 s) is 10-30s.
+    trials = sample_target_trials(ALL, n=10, bucket="10-30s")
+    assert [(t.enrol.utt_id, t.test.utt_id) for t in trials] == [("a2", "a3")]
+    trials = sample_target_trials(ALL, n=10, bucket="3-10s")
+    assert [(t.enrol.utt_id, t.test.utt_id) for t in trials] == [("a1", "a3")]
+
+
+def test_sampled_target_trials_come_from_all_speakers_not_the_first_ones():
+    # Three speakers with four sessions each: 6 cross-session pairs per speaker.
+    utts = [
+        Utterance(f"{s}{v}", speaker=s, session=f"{s}-v{v}", gender="m", duration=5.0)
+        for s in "PQR"
+        for v in range(4)
+    ]
+    all_pairs = {(t.enrol.utt_id, t.test.utt_id) for t in target_trials(utts)}
+    sample = sample_target_trials(utts, n=6, bucket="3-10s", seed=0)
+
+    assert len({(t.enrol.utt_id, t.test.utt_id) for t in sample}) == 6
+    assert {(t.enrol.utt_id, t.test.utt_id) for t in sample} <= all_pairs
+    assert len({t.enrol.speaker for t in sample}) > 1
+    assert sample == sample_target_trials(utts, n=6, bucket="3-10s", seed=0)
+    assert len(sample_target_trials(utts, n=100, bucket="3-10s")) == len(all_pairs)
+
+
+def test_nontarget_trials_keep_only_pairs_of_the_requested_bucket():
+    # Male pairs with both clips >= 10 s: a2-b1, a2-b2, a3-b2 are 10-30s; a3-b1 is 30-120s.
+    trials = nontarget_trials(ALL, n=3, bucket="10-30s")
+    assert {(t.enrol.utt_id, t.test.utt_id) for t in trials} == {
+        ("a2", "b1"),
+        ("a2", "b2"),
+        ("a3", "b2"),
+    }
+    with pytest.raises(ValueError, match="only"):
+        nontarget_trials(ALL, n=4, bucket="10-30s")

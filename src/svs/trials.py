@@ -13,6 +13,7 @@ from pathlib import Path
 MIN_SPEECH_SECONDS = 3.0  # CFG_SV_MIN_SPEECH_SECONDS: below this the service refuses to score.
 BUCKET_EDGES = (10.0, 30.0, 120.0)
 BUCKETS = ("3-10s", "10-30s", "30-120s", ">120s")  # SVS guide §4.4, §8.3
+BUCKET_STARTS = dict(zip(BUCKETS, (MIN_SPEECH_SECONDS, *BUCKET_EDGES), strict=True))
 
 
 def duration_bucket(seconds: float) -> str:
@@ -72,12 +73,39 @@ def target_trials(utterances: Iterable[Utterance]) -> Iterator[Trial]:
                 yield Trial(enrol, test)
 
 
-def nontarget_trials(utterances: Iterable[Utterance], n: int, seed: int = 0) -> list[Trial]:
+def sample_target_trials(
+    utterances: Iterable[Utterance], n: int, bucket: str, seed: int = 0
+) -> list[Trial]:
+    """Up to n target trials of one bucket, drawn uniformly from all of them.
+
+    Reservoir sampling: every pair has the same chance, not only the first speakers in
+    sorted order, and the 10 million clip pairs of 3-10s are never held in memory.
+    If fewer than n exist, all of them are returned.
+    """
+    # A clip shorter than the bucket's start would put every pair it is in below it.
+    utts = [u for u in utterances if u.duration >= BUCKET_STARTS[bucket]]
+    rng = random.Random(seed)
+    kept: list[Trial] = []
+    matching = (t for t in target_trials(utts) if t.bucket == bucket)
+    for i, trial in enumerate(matching):
+        if i < n:
+            kept.append(trial)
+        elif (j := rng.randrange(i + 1)) < n:
+            kept[j] = trial
+    return kept
+
+
+def nontarget_trials(
+    utterances: Iterable[Utterance], n: int, seed: int = 0, bucket: str | None = None
+) -> list[Trial]:
     """Sample n distinct pairs of different speakers of the same gender (SVS guide §8.1).
 
     Cross-gender pairs are easy to reject and would make the EER look better than it is.
+    With a bucket, only pairs whose shorter clip falls in that bucket are kept.
     """
     utts = sorted(utterances, key=lambda u: u.utt_id)
+    if bucket is not None:
+        utts = [u for u in utts if u.duration >= BUCKET_STARTS[bucket]]
     by_gender: dict[str, list[Utterance]] = defaultdict(list)
     for utt in utts:
         by_gender[utt.gender].append(utt)
@@ -91,11 +119,14 @@ def nontarget_trials(utterances: Iterable[Utterance], n: int, seed: int = 0) -> 
         test = rng.choice(by_gender[enrol.gender])
         if enrol.speaker == test.speaker:
             continue
-        enrol, test = sorted((enrol, test), key=lambda u: u.utt_id)
-        if (enrol.utt_id, test.utt_id) in seen:
+        trial = Trial(*sorted((enrol, test), key=lambda u: u.utt_id))
+        if bucket is not None and trial.bucket != bucket:
             continue
-        seen.add((enrol.utt_id, test.utt_id))
-        trials.append(Trial(enrol, test))
+        pair = (trial.enrol.utt_id, trial.test.utt_id)
+        if pair in seen:
+            continue
+        seen.add(pair)
+        trials.append(trial)
     if len(trials) < n:
         raise ValueError(f"Found only {len(trials)} distinct non-target pairs, need {n}")
     return trials
