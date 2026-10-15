@@ -207,3 +207,25 @@ Numbers live in `experiments.csv`; this file explains them.
 - Kept videos per bucket: 3-10s 5,464; 10-30s 6,509; 30-120s 8,230; >120s 2,201.
   These differ slightly from the 2026-10-13 estimate, which summed only clips of 3 s
   or more and had no cap. All 1,251 speakers keep 7 to 36 videos (median 17).
+
+## 2026-10-15 — The VoxCeleb1 trial list
+
+- Short buckets (3-10s, 10-30s) come from single clips, long buckets (30-120s, >120s)
+  from whole videos. A trial never mixes the two: a clip lies inside its video, so the
+  two sides would share audio. Each row records its source (SVS guide §8.1).
+- Per bucket: up to 50,000 target trials and 100,000 non-target trials, so every
+  bucket has at least 100,000 trials. Plain round numbers, not tuned.
+- Targets are drawn by reservoir sampling, so every cross-session pair of the bucket
+  has the same chance; taking the first 50,000 would have used only the first few
+  speakers in sorted order. Non-targets are same-gender, sampled per bucket.
+- Available target pairs: 3-10s 10,871,284 (clips); 10-30s 496,483 (clips);
+  30-120s 47,165 (videos); >120s 3,186 (videos, 535 speakers). The >120s bucket uses
+  all of them; its EER will rest on few target trials and is less stable.
+- `make trials` (seed 0) wrote 550,351 trials in 13 s. SHA-256 of
+  artifacts/trials/voxceleb1.tsv: fd6cd63e8ebc4131499c8cd156354275fb70cb1fda0df70411da883200ab28cb.
+  A rebuild gives the identical file.
+- Independent check of the file: 0 duplicate pairs, 0 same-session targets, 0 wrong
+  labels, 0 cross-gender non-targets, 0 trials mixing clip and video.
+- Not met: same-language non-targets. VoxCeleb1 has nationality, not language
+  (open item 2). Not built yet: the cohort-disjointness test; the cohort comes with
+  AS-Norm.

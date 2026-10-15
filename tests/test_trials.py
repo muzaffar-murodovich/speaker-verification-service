@@ -92,11 +92,11 @@ def test_trial_rejects_a_clip_below_the_minimum():
 
 def test_write_trials_writes_a_header_and_one_row_per_trial(tmp_path):
     path = tmp_path / "trials.tsv"
-    assert write_trials(path, [Trial(A1, A3), Trial(A3, B1)]) == 2
+    assert write_trials(path, [("clip", Trial(A1, A3)), ("video", Trial(A3, B1))]) == 2
     assert path.read_text().splitlines() == [
-        "enrol\ttest\ttarget\tbucket",
-        "a1\ta3\t1\t3-10s",
-        "a3\tb1\t0\t30-120s",
+        "enrol\ttest\ttarget\tbucket\tsource",
+        "a1\ta3\t1\t3-10s\tclip",
+        "a3\tb1\t0\t30-120s\tvideo",
     ]
 
 

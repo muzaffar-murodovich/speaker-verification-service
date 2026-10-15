@@ -132,13 +132,16 @@ def nontarget_trials(
     return trials
 
 
-def write_trials(path: str | Path, trials: Iterable[Trial]) -> int:
-    """Write a tab-separated trial list with a header; return the number of trials."""
+def write_trials(path: str | Path, rows: Iterable[tuple[str, Trial]]) -> int:
+    """Write (source, trial) rows as a tab-separated list with a header; return the count.
+
+    source records where the audio came from, e.g. "clip" or "video" (SVS guide §8.1).
+    """
     count = 0
     with open(path, "w", newline="") as f:
         writer = csv.writer(f, delimiter="\t", lineterminator="\n")
-        writer.writerow(["enrol", "test", "target", "bucket"])
-        for t in trials:
-            writer.writerow([t.enrol.utt_id, t.test.utt_id, int(t.is_target), t.bucket])
+        writer.writerow(["enrol", "test", "target", "bucket", "source"])
+        for source, t in rows:
+            writer.writerow([t.enrol.utt_id, t.test.utt_id, int(t.is_target), t.bucket, source])
             count += 1
     return count

@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup model data embeddings embeddings-videos test lint format eval clean
+.PHONY: help setup model data embeddings embeddings-videos trials test lint format eval clean
 
 help: ## Show available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -43,6 +43,11 @@ embeddings: ## Embed every VoxCeleb1 clip (~1.6 h on Mac CPU); a rerun resumes
 
 embeddings-videos: ## One embedding per VoxCeleb1 video, clips joined (~3.5 h); a rerun resumes
 	uv run python -m svs.embed_cache $(VOX_DIR)/wav $(VOX_DIR)/archives/vox1_meta.csv $(EMB_DIR)-videos --join-videos
+
+TRIALS := artifacts/trials/voxceleb1.tsv
+
+trials: ## Build the VoxCeleb1 trial list from both embedding caches (seed 0)
+	uv run python -m svs.trial_list $(EMB_DIR) $(EMB_DIR)-videos $(VOX_DIR)/archives/vox1_meta.csv $(TRIALS)
 
 test: ## Run the test suite
 	uv run pytest
