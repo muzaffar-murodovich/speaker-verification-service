@@ -247,3 +247,29 @@ Numbers live in `experiments.csv`; this file explains them.
   scores 1.0. These look like the same audio uploaded twice under two video ids, which
   the same-session guard cannot see. Not fixed yet: the first EER uses the list as it
   is, then the effect of removing such pairs is measured.
+
+## 2026-10-16 — First EER per bucket (before duplicate-audio cleanup)
+
+- `make eer` (commit b7b879e) reads the score file and prints the EER per bucket.
+  A trial is accepted when score >= threshold. The EER is the mean of the miss and
+  false-alarm rates at the threshold where they are closest.
+- Results, raw cosine, duplicate audio NOT removed (experiments.csv d5-eer-*):
+
+  | bucket  | EER %  | threshold | n_target | n_nontarget |
+  |---------|--------|-----------|----------|-------------|
+  | 3-10s   | 1.582  | 0.3476    | 50,000   | 100,000     |
+  | 10-30s  | 0.592  | 0.4265    | 50,000   | 100,000     |
+  | 30-120s | 0.638  | 0.4524    | 47,165   | 100,000     |
+  | >120s   | 0.345  | 0.4873    | 3,186    | 100,000     |
+
+- Gap between miss and false-alarm rate at the chosen threshold: at most 0.001 pp.
+- Independent check: scikit-learn roc_curve (not a project dependency) gives the same
+  numbers with drop_intermediate=False. With its default it skips thresholds and gives
+  0.339 % for >120s; our code keeps every threshold.
+- In >120s one target error moves the miss rate by 0.031 pp; 0.345 % rests on about
+  11 missed targets. This number is less stable than the others.
+- 10-30s (clips) is lower than 30-120s (videos). Not explained yet; the two buckets
+  come from different sources.
+- Not comparable to the published 0.878 % (vox1-O-clean, a different trial list).
+- These numbers are a baseline. The duplicate-audio pairs make target trials easier,
+  so the EER can only go up when they are removed. That cleanup is the next step.
