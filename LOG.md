@@ -229,3 +229,21 @@ Numbers live in `experiments.csv`; this file explains them.
 - Not met: same-language non-targets. VoxCeleb1 has nationality, not language
   (open item 2). Not built yet: the cohort-disjointness test; the cohort comes with
   AS-Norm.
+
+## 2026-10-16 — Cosine scores for the VoxCeleb1 trial list
+
+- `make scores` writes artifacts/scores/voxceleb1-cosine.tsv: the trial list with a
+  score column. The score is the cosine of the enrol and test embeddings. The source
+  column picks the cache (clip or video) for both sides. Scores keep every digit, so
+  rounding cannot create ties.
+- Run on the Mac: 550,351 scores in 3.7 s, peak memory 4.1 GB. SHA-256 of the file:
+  f7dc03a3de47d49c2f79887400f7d5a3d0223d80f0df7084cfe3a7e76c44ef70.
+- Independent check (plain dot products from the .npz files, not svs.score): rows in
+  the same order as the trial list; max difference 1.2e-7 on 2,000 random rows; 0 NaN.
+- Mean score per bucket, target / non-target: 3-10s 0.646 / 0.062; 10-30s 0.755 / 0.079;
+  30-120s 0.811 / 0.088; >120s 0.849 / 0.090.
+- 22 target trials score above 0.999 (10-30s 7, 30-120s 6, >120s 9), each from two
+  different video ids, e.g. id10683/Fy5YN2c7608/00008 vs id10683/OMyNDgBxHSI/00008
+  scores 1.0. These look like the same audio uploaded twice under two video ids, which
+  the same-session guard cannot see. Not fixed yet: the first EER uses the list as it
+  is, then the effect of removing such pairs is measured.

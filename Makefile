@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup model data embeddings embeddings-videos trials test lint format eval clean
+.PHONY: help setup model data embeddings embeddings-videos trials scores test lint format eval clean
 
 help: ## Show available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -48,6 +48,11 @@ TRIALS := artifacts/trials/voxceleb1.tsv
 
 trials: ## Build the VoxCeleb1 trial list from both embedding caches (seed 0)
 	uv run python -m svs.trial_list $(EMB_DIR) $(EMB_DIR)-videos $(VOX_DIR)/archives/vox1_meta.csv $(TRIALS)
+
+SCORES := artifacts/scores/voxceleb1-cosine.tsv
+
+scores: ## Cosine score of every trial in the VoxCeleb1 trial list
+	uv run python -m svs.score $(TRIALS) $(EMB_DIR) $(EMB_DIR)-videos $(SCORES)
 
 test: ## Run the test suite
 	uv run pytest
