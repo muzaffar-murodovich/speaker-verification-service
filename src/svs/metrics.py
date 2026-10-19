@@ -38,18 +38,20 @@ def eer(target: NDArray, nontarget: NDArray) -> tuple[float, float]:
     return float((miss[i] + false_alarm[i]) / 2), float(thresholds[i])
 
 
+def read_bucket_scores(path: str) -> dict[str, tuple[NDArray, NDArray]]:
+    """Target and non-target scores of each bucket of a score file, in BUCKETS order."""
+    scores = {bucket: {"1": [], "0": []} for bucket in BUCKETS}
+    with open(path, newline="") as f:
+        for r in csv.DictReader(f, delimiter="\t"):
+            scores[r["bucket"]][r["target"]].append(float(r["score"]))
+    return {b: (np.array(s["1"]), np.array(s["0"])) for b, s in scores.items()}
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("scores_tsv")
     args = parser.parse_args()
-    with open(args.scores_tsv, newline="") as f:
-        rows = list(csv.DictReader(f, delimiter="\t"))
     print("bucket\tEER_%\tthreshold\tn_target\tn_nontarget")
-    for bucket in BUCKETS:
-        scores = {"1": [], "0": []}
-        for r in rows:
-            if r["bucket"] == bucket:
-                scores[r["target"]].append(float(r["score"]))
-        rate, threshold = eer(np.array(scores["1"]), np.array(scores["0"]))
-        n_target, n_nontarget = len(scores["1"]), len(scores["0"])
-        print(f"{bucket}\t{100 * rate:.3f}\t{threshold:.4f}\t{n_target}\t{n_nontarget}")
+    for bucket, (target, nontarget) in read_bucket_scores(args.scores_tsv).items():
+        rate, threshold = eer(target, nontarget)
+        print(f"{bucket}\t{100 * rate:.3f}\t{threshold:.4f}\t{len(target)}\t{len(nontarget)}")

@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup model data embeddings embeddings-videos trials duplicates scores eer test lint format eval clean
+.PHONY: help setup model data embeddings embeddings-videos trials duplicates scores eer det test lint format eval clean
 
 help: ## Show available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -61,6 +61,11 @@ scores: ## Cosine score of every trial in the VoxCeleb1 trial list
 
 eer: ## EER per duration bucket from the score file
 	uv run python -m svs.metrics $(SCORES)
+
+DET := artifacts/plots/voxceleb1-det.png
+
+det: ## DET plot, one line per duration bucket
+	uv run python -m svs.det $(SCORES) $(DET)
 
 test: ## Run the test suite
 	uv run pytest

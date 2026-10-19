@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 # Runtime dependencies are added on the day they are first used (audio/VAD on D2, ONNX model on D3).
 dependencies = [
     "kaldi-native-fbank>=1.22.3",
+    "matplotlib>=3.11.2",
     "numpy>=1.26",
     "onnxruntime>=1.30.0",
     "scipy>=1.11",
