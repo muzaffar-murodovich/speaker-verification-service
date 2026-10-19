@@ -4,6 +4,7 @@ import argparse
 from collections import Counter
 from pathlib import Path
 
+from svs.duplicates import merge_sessions, read_video_pairs
 from svs.embed_cache import read_cache
 from svs.trials import (
     BUCKETS,
@@ -40,13 +41,16 @@ if __name__ == "__main__":
     parser.add_argument("clip_cache")
     parser.add_argument("video_cache")
     parser.add_argument("meta_csv")
+    parser.add_argument("shared_videos", help="video pairs from make duplicates")
     parser.add_argument("out_tsv")
     args = parser.parse_args()
     genders = read_genders(args.meta_csv)
+    # Videos that hold the same audio become one session, so the guard keeps them apart.
+    sessions = merge_sessions(read_video_pairs(args.shared_videos))
     pools = {}
     for source, cache in (("clip", args.clip_cache), ("video", args.video_cache)):
         utt_ids, seconds, _ = read_cache(cache)
-        pools[source] = utterances(utt_ids, seconds, genders)
+        pools[source] = utterances(utt_ids, seconds, genders, sessions)
     rows = build_trial_list(pools, N_TARGET, N_NONTARGET)
     Path(args.out_tsv).parent.mkdir(parents=True, exist_ok=True)
     print(f"Wrote {write_trials(args.out_tsv, rows)} trials to {args.out_tsv}")

@@ -46,8 +46,8 @@ embeddings-videos: ## One embedding per VoxCeleb1 video, clips joined (~3.5 h); 
 
 TRIALS := artifacts/trials/voxceleb1.tsv
 
-trials: ## Build the VoxCeleb1 trial list from both embedding caches (seed 0)
-	uv run python -m svs.trial_list $(EMB_DIR) $(EMB_DIR)-videos $(VOX_DIR)/archives/vox1_meta.csv $(TRIALS)
+trials: ## Build the VoxCeleb1 trial list from both caches; shared-audio videos are one session
+	uv run python -m svs.trial_list $(EMB_DIR) $(EMB_DIR)-videos $(VOX_DIR)/archives/vox1_meta.csv $(DUPLICATES) $(TRIALS)
 
 DUPLICATES := artifacts/trials/voxceleb1-shared-videos.tsv
 

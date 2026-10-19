@@ -55,3 +55,11 @@ def test_utterances_leave_out_clips_below_three_seconds():
 def test_utterances_accept_joined_video_ids():
     utts = utterances(["id1/v1", "id1/v2"], [130.0, 2.0], {"id1": "m"})
     assert utts == [Utterance("id1/v1", speaker="id1", session="v1", gender="m", duration=130.0)]
+
+
+def test_utterances_take_the_merged_session_for_clips_and_videos():
+    sessions = {"id1/v2": "v1"}
+    utts = utterances(
+        ["id1/v2/00001", "id1/v2", "id1/v3"], [5.0, 40.0, 40.0], {"id1": "m"}, sessions
+    )
+    assert [u.session for u in utts] == ["v1", "v1", "v3"]
