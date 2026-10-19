@@ -305,3 +305,38 @@ Numbers live in `experiments.csv`; this file explains them.
 - Target trials of the current list across a found video pair (direct pairs only, no
   chains yet): 3-10s 651 of 50,000 (1.30 %); 10-30s 807 of 50,000 (1.61 %);
   30-120s 358 of 47,165 (0.76 %); >120s 81 of 3,186 (2.54 %).
+
+## 2026-10-19 — EER after merging videos that share audio
+
+- `merge_sessions` (commit 2763d60) joins video pairs from `make duplicates` into
+  groups, chains included (A-B and B-C make A, B, C one session). The session is the
+  group's first video id in sorted order, so the result does not depend on pair order.
+  1,055 video pairs give 761 groups over 1,712 videos; sizes 2: 630, 3: 101, 4: 15,
+  5: 11, 6: 2, 7: 1, 15: 1. The 15-video group (id11157) links 14 videos to one video,
+  3IdsvAQv_3c, mostly at shared >= 0.95; it looks like a compilation. A chain through
+  a compilation also merges videos that are different interviews, which removes some
+  valid targets but never keeps a same-session one.
+- `make trials` (commit 4497fc0) now takes the video-pair file. New list: 549,856 trials;
+  targets 3-10s 50,000; 10-30s 50,000; 30-120s 46,754; >120s 3,102. SHA-256
+  5828838be4bf26b2b1a1b250b278176765a405d81c70968b7ba8e1b110b3450d, identical on
+  5 rebuilds. Scores SHA-256 6c5213efb74726507f4a16c36b699d8b7ee4266c8cba18dc78188f0d80a2058a.
+- One of 6 runs of `make trials` crashed at exit (libc++abi recursive_mutex lock
+  failed, exit 134) after the file was written; the file was identical to the other
+  runs. Cause not found.
+- EER %, raw cosine (experiments.csv d5-eer-clean-*):
+
+  | bucket  | old list | old list minus duplicates | new list (headline) |
+  |---------|----------|---------------------------|---------------------|
+  | 3-10s   | 1.582    | 1.590 (686 removed)       | 1.560               |
+  | 10-30s  | 0.592    | 0.600 (862 removed)       | 0.602               |
+  | 30-120s | 0.638    | 0.642 (411 removed)       | 0.642               |
+  | >120s   | 0.345    | 0.355 (84 removed)        | 0.355               |
+
+- Pure effect of the duplicates (same list, duplicates removed): EER goes up by
+  0.004 to 0.010 pp in every bucket.
+- In 3-10s and 10-30s the new list is mostly a new target sample: 237 of 50,000 and
+  4,904 of 50,000 old targets remain. Removing pairs shifts every later reservoir
+  decision. Two samples of 3-10s give 1.590 and 1.560, so the sampling spread is
+  larger than the duplicate effect there.
+- Open item for the mentor: the third decimal of the short-bucket EERs depends on
+  the sample. An interval (e.g. bootstrap) would show how far it can move; not built.
