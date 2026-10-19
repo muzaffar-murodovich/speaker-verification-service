@@ -273,3 +273,35 @@ Numbers live in `experiments.csv`; this file explains them.
 - Not comparable to the published 0.878 % (vox1-O-clean, a different trial list).
 - These numbers are a baseline. The duplicate-audio pairs make target trials easier,
   so the EER can only go up when they are removed. That cleanup is the next step.
+
+## 2026-10-19 — Videos that hold the same audio under two video ids
+
+- Some interviews were uploaded twice. The same-session guard compares video ids, so a
+  target trial across two such videos passes it although both sides are one session.
+- Embedding cosine alone cannot find them. Cross-video clip pairs of one speaker
+  fall off smoothly with cosine, with no gap; same-video clip pairs also reach
+  cosine >= 0.9999 (38 pairs). Cosine measures how alike two voices are, not whether
+  the audio is the same.
+- Decision rule: normalised cross-correlation of the two waveforms at the best lag
+  (`shared_audio`). 500 random cross-video pairs of one speaker reached at most 0.131
+  (median 0.04). Among the 3,933 pairs at cosine >= 0.95, 3,506 were above 0.2 and most
+  above 0.5. MIN_SHARED = 0.2.
+- Filter: only clip pairs at cosine >= MIN_COSINE are correlated. Samples found shared
+  audio in 41 of 1,000 pairs at 0.90-0.95 (those 41 gave 10 video pairs not found at
+  >= 0.95) and in 0 of 500 per band at 0.85-0.90, 0.80-0.85, 0.7-0.8, 0.6-0.7,
+  0.5-0.6, < 0.5. MIN_COSINE = 0.85.
+- Two videos are one session if one clip pair shares audio, so the other clip pairs of
+  a confirmed video pair are not read.
+- `make duplicates` (Mac): 235,820 candidate clip pairs, 1,055 video pairs of 551
+  speakers, 1,791 s. File artifacts/trials/voxceleb1-shared-videos.tsv, SHA-256
+  e0d8cec59cd681d7642928b638c41563d0386d4cef0ba2e629de919e7bd32a67.
+- Checks: 0 pairs across speakers, 0 pairs of a video with itself, 0 repeated pairs.
+- Video pairs by the cosine of their confirming clip pair: >= 0.95 858; 0.90-0.95 139;
+  0.85-0.90 58. The sample saw 0 of 500 at 0.85-0.90, yet the full band held 58 video
+  pairs: a sample of 500 cannot see a rate near 0.03 %.
+- Known limit: pairs below 0.85 are likely missed; how many is not measured. Kept
+  at 0.85 because the 58 pairs of the lowest band touch at most 36 targets per bucket
+  (0.07 %); 0.80 would cost about 1.5 h more (estimate from the 1,791 s run).
+- Target trials of the current list across a found video pair (direct pairs only, no
+  chains yet): 3-10s 651 of 50,000 (1.30 %); 10-30s 807 of 50,000 (1.61 %);
+  30-120s 358 of 47,165 (0.76 %); >120s 81 of 3,186 (2.54 %).
