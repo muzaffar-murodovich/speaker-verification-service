@@ -2,7 +2,9 @@
 
 import numpy as np
 
-from svs.duplicates import candidate_pairs, confirm_video_pairs, shared_audio
+from svs.duplicates import candidate_pairs, confirm_video_pairs, merge_sessions, shared_audio
+from svs.trials import target_trials
+from svs.voxceleb import utterances
 
 rng = np.random.default_rng(0)
 SPEECH = rng.standard_normal(16_000)
@@ -58,3 +60,27 @@ def test_one_confirmed_clip_pair_per_video_pair():
     assert confirmed == [("s/v1/1", "s/v2/1", 0.99, 0.9)]
     # v1-v2 was confirmed by its first pair, so its second pair is never read.
     assert checked == [("s/v1/1", "s/v2/1"), ("s/v1/1", "s/v3/1")]
+
+
+def test_a_chain_of_pairs_is_one_session():
+    # A-B and B-C are pairs; A-C is not, yet all three hold one interview.
+    sessions = merge_sessions([("s/B", "s/C"), ("s/A", "s/B"), ("s/X", "s/Y")])
+    assert sessions == {"s/A": "A", "s/B": "A", "s/C": "A", "s/X": "X", "s/Y": "X"}
+
+
+def test_sessions_do_not_depend_on_pair_order():
+    pairs = [("s/C", "s/D"), ("s/A", "s/D"), ("s/B", "s/C")]
+    assert (
+        merge_sessions(pairs)
+        == merge_sessions(pairs[::-1])
+        == dict.fromkeys(["s/A", "s/B", "s/C", "s/D"], "A")
+    )
+
+
+def test_merged_videos_give_no_target_trial():
+    # v1-v2 and v2-v3 share audio: only pairs with v4 are true cross-session targets.
+    ids = ["s/v1/1", "s/v2/1", "s/v3/1", "s/v4/1"]
+    sessions = merge_sessions([("s/v1", "s/v2"), ("s/v2", "s/v3")])
+    utts = utterances(ids, [5.0] * 4, {"s": "m"}, sessions)
+    pairs = {(t.enrol.utt_id, t.test.utt_id) for t in target_trials(utts)}
+    assert pairs == {("s/v1/1", "s/v4/1"), ("s/v2/1", "s/v4/1"), ("s/v3/1", "s/v4/1")}

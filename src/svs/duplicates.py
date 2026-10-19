@@ -80,6 +80,32 @@ def confirm_video_pairs(
     return confirmed
 
 
+def merge_sessions(video_pairs: Iterable[tuple[str, str]]) -> dict[str, str]:
+    """Session of each <speaker>/<video> in a pair: the first video id of its group.
+
+    Videos linked by a chain of pairs (A-B, B-C) form one group, so A and C share a
+    session although no pair names them together. Taking the first id in sorted order
+    makes the result independent of the pair order.
+    """
+    parent: dict[str, str] = {}
+
+    def root(video: str) -> str:
+        while parent.setdefault(video, video) != video:
+            video = parent[video]
+        return video
+
+    for a, b in video_pairs:
+        ra, rb = root(a), root(b)
+        parent[max(ra, rb)] = min(ra, rb)
+    return {video: root(video).split("/")[1] for video in parent}
+
+
+def read_video_pairs(path: str | Path) -> list[tuple[str, str]]:
+    """(video_a, video_b) of every row of a file written by this module."""
+    with open(path, newline="") as f:
+        return [(r["video_a"], r["video_b"]) for r in csv.DictReader(f, delimiter="\t")]
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("wav_dir")

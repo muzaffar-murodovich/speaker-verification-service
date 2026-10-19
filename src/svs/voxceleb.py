@@ -40,17 +40,23 @@ def list_clips(wav_dir: str | Path, meta_csv: str | Path) -> list[Clip]:
 
 
 def utterances(
-    utt_ids: Iterable[str], net_seconds: Iterable[float], genders: dict[str, str]
+    utt_ids: Iterable[str],
+    net_seconds: Iterable[float],
+    genders: dict[str, str],
+    sessions: dict[str, str] | None = None,
 ) -> list[Utterance]:
     """Clips with at least MIN_SPEECH_SECONDS of net speech; shorter clips are left out.
 
     Speaker and session come from the utt_id (<speaker>/<video>[/<clip>]), so no audio
-    or wav tree is needed. A joined video has no clip part.
+    or wav tree is needed. A joined video has no clip part. sessions maps a
+    <speaker>/<video> to another session name, for videos that hold the same audio.
     """
+    sessions = sessions or {}
     utts = []
     for utt_id, seconds in zip(utt_ids, net_seconds, strict=True):
         if seconds < MIN_SPEECH_SECONDS:
             continue
-        speaker, session = utt_id.split("/")[:2]
+        speaker, video = utt_id.split("/")[:2]
+        session = sessions.get(f"{speaker}/{video}", video)
         utts.append(Utterance(utt_id, speaker, session, genders[speaker], float(seconds)))
     return utts
