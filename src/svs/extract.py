@@ -65,9 +65,19 @@ def extract_speech(
     returned or counted. Empty speech is a valid result, not usable speech.
     Mode 2 is a baseline choice, not a measured optimum.
     """
+    audio, source_rate = load_audio(path, channel)
+    return speech_from_samples(audio, source_rate, segments, vad_mode)
+
+
+def speech_from_samples(
+    audio: NDArray,
+    source_rate: int,
+    segments: Sequence[Sequence[float]],
+    vad_mode: int = 2,
+) -> ExtractedSpeech:
+    """extract_speech for mono audio already in memory, such as degraded audio (D6)."""
     if isinstance(vad_mode, bool) or vad_mode not in (0, 1, 2, 3):
         raise ValueError("VAD mode must be an integer from 0 to 3")
-    audio, source_rate = load_audio(path, channel)
     validate_segments(segments, len(audio) * 1000 / source_rate)
     divisor = math.gcd(source_rate, SAMPLE_RATE)
     if source_rate != SAMPLE_RATE:

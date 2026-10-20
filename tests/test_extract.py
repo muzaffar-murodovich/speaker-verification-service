@@ -4,7 +4,13 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from svs.extract import SAMPLE_RATE, extract_speech, load_audio, validate_segments
+from svs.extract import (
+    SAMPLE_RATE,
+    extract_speech,
+    load_audio,
+    speech_from_samples,
+    validate_segments,
+)
 
 
 def test_accepts_adjacent_segments_gaps_and_audio_boundaries():
@@ -129,3 +135,15 @@ def test_pipeline_validates_segments_before_vad(tmp_path):
         extract_speech(path, [(0, 600), (500, 1000)])
     with pytest.raises(ValueError, match="no samples"):
         extract_speech(path, [(0.001, 0.002)])
+
+
+def test_samples_in_memory_give_the_same_speech_as_the_file(tmp_path):
+    # Degraded audio (D6) enters through speech_from_samples; clean audio must not change.
+    rng = np.random.default_rng(0)
+    audio = (0.3 * rng.standard_normal(8000) * np.sin(np.linspace(0, 20, 8000))).astype(np.float32)
+    path = write_audio(tmp_path, audio, 8000)
+    from_file = extract_speech(path, [(0, 1000)])
+    from_memory = speech_from_samples(load_audio(path)[0], 8000, [(0, 1000)])
+    assert len(from_file.samples) > 0
+    np.testing.assert_array_equal(from_memory.samples, from_file.samples)
+    assert from_memory.selected_seconds == from_file.selected_seconds
