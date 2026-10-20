@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from svs.degrade import CONDITIONS, TELEPHONY_RATE, degrade
+from svs.degrade import CONDITIONS, TELEPHONY_RATE, _opus_encode, degrade
 from svs.extract import SAMPLE_RATE
 
 
@@ -27,7 +27,7 @@ def test_clean_condition_returns_input_unchanged():
     np.testing.assert_array_equal(y, x)
 
 
-@pytest.mark.parametrize("condition", [c for c in CONDITIONS if c != "pcm16k"])
+@pytest.mark.parametrize("condition", [c for c in CONDITIONS if c not in ("pcm16k", "opus")])
 def test_telephony_conditions_run_at_8khz_with_half_the_samples(condition):
     y, rate = degrade(tone(440), condition)
     assert rate == TELEPHONY_RATE
@@ -58,6 +58,25 @@ def test_a_law_and_mu_law_are_different_codecs():
     a, _ = degrade(tone(440), "g711a")
     u, _ = degrade(tone(440), "g711u")
     assert not np.array_equal(a, u)
+
+
+def test_opus_stays_at_16khz_with_every_sample_kept():
+    y, rate = degrade(tone(440), "opus")
+    assert rate == SAMPLE_RATE
+    assert len(y) == SAMPLE_RATE
+
+
+def test_opus_changes_the_audio():
+    x = tone(440)
+    y, _ = degrade(x, "opus")
+    assert np.max(np.abs(y - x)) > 1e-3
+
+
+def test_opus_encodes_at_the_chosen_bitrate():
+    # Noise keeps the variable bitrate near its target; ffmpeg's default would be ~65 kbit/s.
+    noise = (0.1 * np.random.default_rng(0).standard_normal(2 * SAMPLE_RATE)).astype(np.float32)
+    kbit_per_second = len(_opus_encode(noise)) * 8 / 2 / 1000
+    assert 12 < kbit_per_second < 20
 
 
 @pytest.mark.parametrize(
