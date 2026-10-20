@@ -85,3 +85,24 @@ def _g729_round_trip(samples: NDArray[np.float32]) -> NDArray[np.float32]:
     pcm = (np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes()
     out = subprocess.run([str(G729_BINARY)], input=pcm, capture_output=True, check=True).stdout
     return (np.frombuffer(out, dtype="<i2")[: len(samples)] / 32767).astype(np.float32)
+
+
+def add_noise(
+    samples: NDArray[np.float32], noise: NDArray[np.float32], snr_db: float, offset: int = 0
+) -> NDArray[np.float32]:
+    """Mix noise into samples so that their power ratio is exactly snr_db.
+
+    Power is the mean square over the whole clip, silence included. Noise shorter
+    than the clip is repeated; offset picks where in the noise the clip starts.
+    """
+    if not np.isfinite(snr_db):
+        raise ValueError("SNR must be finite")
+    signal_power = np.mean(samples.astype(np.float64) ** 2)
+    if noise.ndim != 1 or not len(noise) or signal_power == 0:
+        raise ValueError("Noise must be nonempty and mono, and samples must not be silent")
+    piece = np.resize(np.roll(noise, -offset), len(samples)).astype(np.float64)
+    noise_power = np.mean(piece**2)
+    if noise_power == 0:
+        raise ValueError("The noise piece is silent; its SNR is undefined")
+    scale = np.sqrt(signal_power / (noise_power * 10 ** (snr_db / 10)))
+    return (samples + scale * piece).astype(np.float32)

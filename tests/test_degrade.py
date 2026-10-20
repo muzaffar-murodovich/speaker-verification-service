@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from svs import degrade as degrade_module
-from svs.degrade import CONDITIONS, TELEPHONY_RATE, _opus_encode, degrade
+from svs.degrade import CONDITIONS, TELEPHONY_RATE, _opus_encode, add_noise, degrade
 from svs.extract import SAMPLE_RATE
 
 
@@ -105,3 +105,38 @@ def test_rejects_empty_multichannel_or_nonfinite_audio(samples):
 def test_rejects_unknown_condition():
     with pytest.raises(ValueError):
         degrade(tone(440), "g722")
+
+
+@pytest.mark.parametrize("snr", [15.0, 5.0, 0.0])
+def test_noise_is_mixed_at_exactly_the_requested_snr(snr):
+    x = tone(440)
+    noise = np.random.default_rng(0).standard_normal(3000).astype(np.float32)
+    assert snr_db(x, add_noise(x, noise, snr)) == pytest.approx(snr, abs=0.01)
+
+
+def test_short_noise_is_repeated_to_cover_the_whole_clip():
+    x = tone(440)
+    noise = np.random.default_rng(0).standard_normal(1000).astype(np.float32)
+    added = add_noise(x, noise, 5.0) - x
+    # Without repetition the last 15,000 samples would carry no noise.
+    np.testing.assert_allclose(added[1000:2000], added[:1000], rtol=1e-4, atol=1e-6)
+    assert energy(added[-1000:]) > 0
+
+
+def test_offset_starts_the_clip_at_a_different_place_in_the_noise():
+    x = tone(440)
+    noise = np.random.default_rng(0).standard_normal(5000).astype(np.float32)
+    assert not np.allclose(add_noise(x, noise, 5.0), add_noise(x, noise, 5.0, offset=2500))
+
+
+@pytest.mark.parametrize(
+    "samples, noise",
+    [
+        (np.zeros(100, np.float32), np.ones(100, np.float32)),
+        (tone(440), np.zeros(100, np.float32)),
+        (tone(440), np.zeros(0, np.float32)),
+    ],
+)
+def test_rejects_silent_or_empty_input(samples, noise):
+    with pytest.raises(ValueError):
+        add_noise(samples, noise, 5.0)

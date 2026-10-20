@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup g729 model data embeddings embeddings-videos trials duplicates scores eer det test lint format eval clean
+.PHONY: help setup g729 model data musan embeddings embeddings-videos trials duplicates scores eer det test lint format eval clean
 
 help: ## Show available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -46,6 +46,22 @@ $(VOX_DIR)/.unpacked:
 	unzip -q -o $(VOX_DIR)/vox1_dev_wav.zip -d $(VOX_DIR)
 	unzip -q -o $(VOX_DIR)/archives/vox1_test_wav.zip -d $(VOX_DIR)
 	rm $(VOX_DIR)/vox1_dev_wav.zip
+	touch $@
+
+# MUSAN noise for the degradation harness (handbook §6.1 lists MUSAN as public data).
+# CC BY 4.0: Snyder, Chen, Povey, "MUSAN: A Music, Speech, and Noise Corpus", 2015.
+# The MD5 is OpenSLR's own checksum.md5; only the noise part is unpacked.
+MUSAN_URL := https://www.openslr.org/resources/17/musan.tar.gz
+MUSAN_MD5 := 0c472d4fc0c5141eca47ad1ffeb2a7df
+MUSAN_DIR := data/musan
+
+musan: $(MUSAN_DIR)/.unpacked ## Download MUSAN (~11 GB), verify its MD5, unpack noise/ to data/musan
+
+$(MUSAN_DIR)/.unpacked:
+	mkdir -p $(MUSAN_DIR)
+	curl -fL -C - --retry 20 --retry-all-errors --retry-delay 10 -o $(MUSAN_DIR)/musan.tar.gz $(MUSAN_URL)
+	test "$$(openssl md5 < $(MUSAN_DIR)/musan.tar.gz | awk '{print $$NF}')" = "$(MUSAN_MD5)"
+	tar -xzf $(MUSAN_DIR)/musan.tar.gz -C data musan/noise
 	touch $@
 
 # Each long step writes a .done file when it finishes, so make skips it next time.
