@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from svs import degrade as degrade_module
 from svs.degrade import CONDITIONS, TELEPHONY_RATE, _opus_encode, degrade
 from svs.extract import SAMPLE_RATE
 
@@ -58,6 +59,19 @@ def test_a_law_and_mu_law_are_different_codecs():
     a, _ = degrade(tone(440), "g711a")
     u, _ = degrade(tone(440), "g711u")
     assert not np.array_equal(a, u)
+
+
+def test_g729_is_a_low_bitrate_codec_not_g711():
+    narrow, _ = degrade(tone(440), "pcm8k")
+    coded, _ = degrade(tone(440), "g729")
+    # G.729 keeps how speech sounds, not the waveform: far below G.711's ~36 dB.
+    assert snr_db(narrow, coded) < 20
+
+
+def test_g729_asks_for_the_build_step_when_the_tool_is_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(degrade_module, "G729_BINARY", tmp_path / "missing")
+    with pytest.raises(FileNotFoundError, match="make g729"):
+        degrade(tone(440), "g729")
 
 
 def test_opus_stays_at_16khz_with_every_sample_kept():

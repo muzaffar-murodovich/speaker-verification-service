@@ -7,6 +7,7 @@ code resamples to 16 kHz itself, the same way it handles real 8 kHz input.
 
 import io
 import subprocess
+from pathlib import Path
 
 import numpy as np
 import soundfile as sf
@@ -17,11 +18,13 @@ from svs.extract import SAMPLE_RATE
 
 TELEPHONY_RATE = 8000
 # Condition names follow the codec labels of the SVS guide (§3.3, §8.3).
-CONDITIONS = ("pcm16k", "pcm8k", "g711a", "g711u", "opus")
+CONDITIONS = ("pcm16k", "pcm8k", "g711a", "g711u", "g729", "opus")
 _G711_SUBTYPES = {"g711a": "ALAW", "g711u": "ULAW"}
 # The handbook and the SVS guide name Opus but no bitrate. 16 kbit/s at 16 kHz is the
 # low end of the wideband-speech range in RFC 7587 §3.1.1.
 OPUS_BITRATE = "16k"
+# ffmpeg cannot encode G.729; tools/g729.c wraps bcg729 and `make g729` builds it here.
+G729_BINARY = Path("artifacts/bin/g729")
 
 
 def degrade(samples: NDArray[np.float32], condition: str) -> tuple[NDArray[np.float32], int]:
@@ -39,6 +42,8 @@ def degrade(samples: NDArray[np.float32], condition: str) -> tuple[NDArray[np.fl
     narrow = resample_poly(samples, 1, SAMPLE_RATE // TELEPHONY_RATE).astype(np.float32)
     if condition == "pcm8k":
         return narrow, TELEPHONY_RATE
+    if condition == "g729":
+        return _g729_round_trip(narrow), TELEPHONY_RATE
     return _codec_round_trip(narrow, _G711_SUBTYPES[condition]), TELEPHONY_RATE
 
 
@@ -67,3 +72,16 @@ def _opus_encode(samples: NDArray[np.float32]) -> bytes:
 def _opus_decode(stream: bytes) -> NDArray[np.float32]:
     out = ["-f", "f32le", "-ar", str(SAMPLE_RATE), "-ac", "1", "pipe:1"]
     return np.frombuffer(_ffmpeg(["-i", "pipe:0", *out], stream), dtype="<f4").copy()
+
+
+def _g729_round_trip(samples: NDArray[np.float32]) -> NDArray[np.float32]:
+    """Encode and decode 8 kHz audio with G.729 through the bcg729 wrapper.
+
+    The decoded audio lags by the codec's 5 ms look-ahead; the lag is kept, and the
+    zero-padded tail of the last frame is trimmed so the length matches the input.
+    """
+    if not G729_BINARY.exists():
+        raise FileNotFoundError(f"{G729_BINARY} is missing; run `make g729`")
+    pcm = (np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes()
+    out = subprocess.run([str(G729_BINARY)], input=pcm, capture_output=True, check=True).stdout
+    return (np.frombuffer(out, dtype="<i2")[: len(samples)] / 32767).astype(np.float32)

@@ -1,11 +1,19 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup model data embeddings embeddings-videos trials duplicates scores eer det test lint format eval clean
+.PHONY: help setup g729 model data embeddings embeddings-videos trials duplicates scores eer det test lint format eval clean
 
 help: ## Show available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
 
 setup: ## Create .venv and install the project with dev tools (needs uv)
 	uv sync
+
+G729 := artifacts/bin/g729
+
+g729: $(G729) ## Build the G.729 round-trip tool (needs libbcg729: brew install libbcg729 / apt install libbcg729-dev)
+
+$(G729): tools/g729.c
+	mkdir -p $(dir $(G729))
+	cc -O2 -Wall -Wextra -o $(G729) tools/g729.c $$(pkg-config --cflags --libs libbcg729)
 
 MODEL_REV := a2f3dcb1c8702caccc7a55ceb57f5e8d1842112b
 MODEL_SHA := d71b85d9b48058ef68004f04f1b78acebefb9dfcf542e19b976a12a5ad1f10b0
@@ -82,7 +90,7 @@ DET := artifacts/plots/voxceleb1-det.png
 det: ## DET plot, one line per duration bucket
 	uv run python -m svs.det $(SCORES) $(DET)
 
-test: ## Run the test suite
+test: $(G729) ## Run the test suite
 	uv run pytest
 
 lint: ## Check style and common bugs
