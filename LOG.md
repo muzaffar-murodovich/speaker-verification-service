@@ -340,3 +340,41 @@ Numbers live in `experiments.csv`; this file explains them.
   larger than the duplicate effect there.
 - Open item for the mentor: the third decimal of the short-bucket EERs depends on
   the sample. An interval (e.g. bootstrap) would show how far it can move; not built.
+
+## 2026-10-20 — DET plot, make eval, D5 summary
+
+- `make det` (commit af1b12d) draws one DET line per bucket from the score file, on
+  normal-deviate axes from 0.001 % to 40 %; the legend gives EER and trial counts.
+  Points where a rate is 0 or 1 lie at infinity on these axes and are left out, so the
+  >120s line ends near 2.5 % false alarms, where its miss rate reaches 0. Each step of
+  that line is one of its 3,102 target trials. New dependency: matplotlib, for this plot.
+- `make eval` (commit d19bfe0) builds what is missing, in order: model, VoxCeleb1,
+  clip and video embeddings, shared-audio video pairs. Each long step writes a file
+  when it finishes (.done for the caches), so make skips it next time and an
+  interrupted run resumes. Then it always reruns trials, scores, EER and DET, and
+  checks the files against eval.sha256 (the run of 2026-10-19). A mismatch prints a
+  warning and does not fail: another machine may round embeddings differently.
+- Checked on the Mac: first `make eval` 30.6 s (embedding steps found every speaker
+  file and wrote none), second 18.9 s; same EER as d5-eer-clean-*, all three files OK.
+  A dry run (`make -n eval`) in an empty directory lists every step in order.
+  Not checked: a full run from a clean clone (31 GB download, ~7 h of embedding).
+- M1 status: >= 1,000 speakers and >= 10,000 utterances embedded (1,251 / 153,516);
+  549,856 trials over four buckets; same-session guard test fails when the guard is
+  removed; EER with DET and trial counts; every bucket below 2 x 0.878 % (published
+  figure for this checkpoint, on a different trial list). Missing: the cohort
+  disjointness test (comes with AS-Norm, D8); a full clean-clone run of make eval.
+
+### Open items for the mentor
+
+1. Bucket by the shorter side of a trial (accepted earlier).
+2. No same-language non-targets: VoxCeleb1 has nationality, not language.
+3. Long buckets use whole videos, capped at 300 s; >120s has only 3,102 targets, so its
+   EER is the least stable.
+4. Videos that hold the same audio: 1,055 pairs found with cosine >= 0.85 and
+   waveform correlation >= 0.2; pairs below 0.85 are likely missed (count unknown).
+5. The third decimal of the short-bucket EERs depends on the target sample (two
+   samples of 3-10s: 1.590 and 1.560). No interval yet; bootstrap is one option.
+6. Faster reproduction: may the embedding caches (154 MB) go to a private Hugging Face
+   dataset, so that a `make fetch-cache` step replaces the ~7 h of embedding?
+7. One of 6 runs of `make trials` crashed at exit (libc++abi mutex) after writing a
+   correct file; cause not found.
