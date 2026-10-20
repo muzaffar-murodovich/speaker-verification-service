@@ -11,7 +11,9 @@ MODEL_REV := a2f3dcb1c8702caccc7a55ceb57f5e8d1842112b
 MODEL_SHA := d71b85d9b48058ef68004f04f1b78acebefb9dfcf542e19b976a12a5ad1f10b0
 MODEL := artifacts/models/voxceleb_ECAPA512_LM.onnx
 
-model: ## Download the pinned WeSpeaker ECAPA-TDNN and verify its checksum
+model: $(MODEL) ## Download the pinned WeSpeaker ECAPA-TDNN and verify its checksum
+
+$(MODEL):
 	mkdir -p $(dir $(MODEL))
 	curl -fL -o $(MODEL) https://huggingface.co/Wespeaker/wespeaker-ecapa-tdnn512-LM/resolve/$(MODEL_REV)/$(notdir $(MODEL))
 	echo "$(MODEL_SHA)  $(MODEL)" | shasum -a 256 -c
@@ -24,35 +26,48 @@ VOX_URL := https://huggingface.co/datasets/ProgramComputer/voxceleb/resolve/$(VO
 VOX_DIR := data/voxceleb1
 VOX_FILES := $(shell awk '{print $$2}' voxceleb1.sha256)
 
-data: ## Download VoxCeleb1 (~34 GB), verify checksums, unpack to data/voxceleb1/wav
+data: $(VOX_DIR)/.unpacked ## Download VoxCeleb1 (~34 GB), verify checksums, unpack to data/voxceleb1/wav
+
+$(VOX_DIR)/.unpacked:
 	mkdir -p $(VOX_DIR)/archives
 	for f in $(VOX_FILES); do \
 		curl -fL -C - --retry 20 --retry-all-errors --retry-delay 10 -o $(VOX_DIR)/archives/$$f $(VOX_URL)/$$f || exit 1; \
 	done
 	cd $(VOX_DIR)/archives && shasum -a 256 -c $(CURDIR)/voxceleb1.sha256
-	test -f $(VOX_DIR)/.unpacked || ( \
-		cat $(VOX_DIR)/archives/vox1_dev_wav_parta? > $(VOX_DIR)/vox1_dev_wav.zip && \
-		unzip -q -o $(VOX_DIR)/vox1_dev_wav.zip -d $(VOX_DIR) && \
-		unzip -q -o $(VOX_DIR)/archives/vox1_test_wav.zip -d $(VOX_DIR) && \
-		rm $(VOX_DIR)/vox1_dev_wav.zip && touch $(VOX_DIR)/.unpacked )
+	cat $(VOX_DIR)/archives/vox1_dev_wav_parta? > $(VOX_DIR)/vox1_dev_wav.zip
+	unzip -q -o $(VOX_DIR)/vox1_dev_wav.zip -d $(VOX_DIR)
+	unzip -q -o $(VOX_DIR)/archives/vox1_test_wav.zip -d $(VOX_DIR)
+	rm $(VOX_DIR)/vox1_dev_wav.zip
+	touch $@
 
+# Each long step writes a .done file when it finishes, so make skips it next time.
+# An interrupted run writes none, and the rerun resumes where it stopped.
 EMB_DIR := artifacts/embeddings/voxceleb1
+META := $(VOX_DIR)/archives/vox1_meta.csv
 
-embeddings: ## Embed every VoxCeleb1 clip (~1.6 h on Mac CPU); a rerun resumes
-	uv run python -m svs.embed_cache $(VOX_DIR)/wav $(VOX_DIR)/archives/vox1_meta.csv $(EMB_DIR)
+embeddings: $(EMB_DIR)/.done ## Embed every VoxCeleb1 clip (~3.5 h on the home PC); a rerun resumes
 
-embeddings-videos: ## One embedding per VoxCeleb1 video, clips joined (~3.5 h); a rerun resumes
-	uv run python -m svs.embed_cache $(VOX_DIR)/wav $(VOX_DIR)/archives/vox1_meta.csv $(EMB_DIR)-videos --join-videos
+$(EMB_DIR)/.done: | $(MODEL) $(VOX_DIR)/.unpacked
+	uv run python -m svs.embed_cache $(VOX_DIR)/wav $(META) $(EMB_DIR)
+	touch $@
+
+embeddings-videos: $(EMB_DIR)-videos/.done ## One embedding per video, clips joined (~3.2 h on the home PC)
+
+$(EMB_DIR)-videos/.done: | $(MODEL) $(VOX_DIR)/.unpacked
+	uv run python -m svs.embed_cache $(VOX_DIR)/wav $(META) $(EMB_DIR)-videos --join-videos
+	touch $@
 
 TRIALS := artifacts/trials/voxceleb1.tsv
 
-trials: ## Build the VoxCeleb1 trial list from both caches; shared-audio videos are one session
-	uv run python -m svs.trial_list $(EMB_DIR) $(EMB_DIR)-videos $(VOX_DIR)/archives/vox1_meta.csv $(DUPLICATES) $(TRIALS)
-
 DUPLICATES := artifacts/trials/voxceleb1-shared-videos.tsv
 
-duplicates: ## Find video pairs of one speaker that hold the same audio (~30 min)
-	uv run python -m svs.duplicates $(VOX_DIR)/wav $(EMB_DIR) $(DUPLICATES)
+duplicates: $(DUPLICATES) ## Find video pairs of one speaker that hold the same audio (~30 min)
+
+$(DUPLICATES): | $(EMB_DIR)/.done
+	uv run python -m svs.duplicates $(VOX_DIR)/wav $(EMB_DIR) $@
+
+trials: | $(EMB_DIR)/.done $(EMB_DIR)-videos/.done $(DUPLICATES) ## Build the trial list; shared-audio videos are one session
+	uv run python -m svs.trial_list $(EMB_DIR) $(EMB_DIR)-videos $(META) $(DUPLICATES) $(TRIALS)
 
 SCORES := artifacts/scores/voxceleb1-cosine.tsv
 
@@ -78,9 +93,15 @@ format: ## Auto-fix style
 	uv run ruff check --fix .
 	uv run ruff format .
 
-eval: ## Reproduce the headline numbers (not built yet; first EER lands on D5)
-	@echo "eval: no evaluation pipeline yet; see LOG.md for progress" >&2
-	@exit 1
+# eval.sha256 holds the files of the run in LOG.md. Another machine may round the
+# embeddings differently, so a mismatch is reported, not treated as a failure.
+eval: ## Reproduce the EER and DET; a clean clone first runs model, data, embeddings (hours)
+	$(MAKE) trials
+	$(MAKE) scores
+	$(MAKE) eer
+	$(MAKE) det
+	@shasum -a 256 -c eval.sha256 \
+		|| echo "eval: files differ from the run recorded in LOG.md; the numbers above are this machine's" >&2
 
 clean: ## Remove caches (keeps data/ and artifacts/)
 	rm -rf .pytest_cache .ruff_cache

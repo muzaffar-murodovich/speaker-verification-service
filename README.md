@@ -4,8 +4,8 @@ A speaker verification (1:1) and identification (1:N) service built during the
 MohirDev internship: speech extraction, ECAPA-TDNN embeddings, calibrated scoring,
 speaker profiles and vector search.
 
-**Status:** D2 extraction implemented and tested; D3 embeddings are next.
-Progress and decisions are in [LOG.md](LOG.md).
+**Status:** first EER and DET on VoxCeleb1 (D5). Progress and decisions are in
+[LOG.md](LOG.md); every reported number is a row of [experiments.csv](experiments.csv).
 
 ## Quickstart
 
@@ -14,8 +14,17 @@ Requires [uv](https://docs.astral.sh/uv/) and `make`.
 ```bash
 make setup   # create .venv and install dependencies
 make test    # run the tests
-make eval    # reproduce the reported numbers (available from D5)
+make eval    # reproduce the reported EER per bucket and the DET plot
 ```
+
+`make eval` builds whatever is missing, in order: the model (24 MB), VoxCeleb1
+(31 GB of archives), clip and video embeddings, the shared-audio video pairs, then
+the trial list, scores, EER and DET. On a clean clone the embeddings take most of
+the time: 12,487 s and 11,550 s on our home PC, plus 1,791 s for the video pairs on
+an M3 Mac. Each long step writes a `.done` file, so a later `make eval` skips it and
+takes about 20 s. At the end the trial list and scores are checked against
+[eval.sha256](eval.sha256), the files of the run in LOG.md; another machine may
+differ in the last float digits, so a mismatch is reported, not treated as a failure.
 
 Run `make` with no target to list all targets.
 
