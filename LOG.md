@@ -378,3 +378,26 @@ Numbers live in `experiments.csv`; this file explains them.
    dataset, so that a `make fetch-cache` step replaces the ~7 h of embedding?
 7. One of 6 runs of `make trials` crashed at exit (libc++abi mutex) after writing a
    correct file; cause not found.
+
+## 2026-10-20 — EER per gender, DET figure in the repo, exit crash
+
+- A full re-read of the handbook and SVS guide after D5 found that SVS guide §8.3
+  requires a gender breakdown in every evaluation (for fairness, not for tuning).
+- The trial list now has a gender column (commit 77e8db0). Every trial is same-gender
+  (targets are one speaker, non-targets are drawn same-gender), and `write_trials`
+  refuses a cross-gender trial. The trials themselves did not change: the first five
+  columns are identical to the 2026-10-19 file. New SHA-256 in eval.sha256.
+- EER %, raw cosine (experiments.csv d5-eer-*-f / -m), female / male:
+  3-10s 1.881 / 1.368; 10-30s 0.714 / 0.539; 30-120s 0.595 / 0.692; >120s 0.555 / 0.198.
+  Targets female / male: 17,692 / 32,308; 19,038 / 30,962; 19,304 / 27,450;
+  1,080 / 2,022. In >120s one female target error is 0.093 pp, so 0.555 % rests on
+  about 6 missed targets. Female EER is higher in three buckets of four; the cause is
+  not analysed. Thresholds stay shared across genders.
+- DET figure of the reported run: docs/figures/voxceleb1-det-d5.png (scores SHA-256
+  4bc1910b…, same bucket EERs as 2026-10-19). `make eval` still writes to artifacts/;
+  the docs copy is the figure of this report and is replaced only by a new report.
+- Exit crash (open item 7): `make trials` and `make scores` loaded onnxruntime
+  through embed_cache without using it. Before: 3 crashes in 19 `make trials` runs,
+  one of them stopping `make eval`. Commit 0ce4aa9 imports onnxruntime only when a model
+  is built; after: 0 crashes in 30 runs. The crash is gone in practice; its exact
+  cause (a libc++ mutex at interpreter exit) is not known.
