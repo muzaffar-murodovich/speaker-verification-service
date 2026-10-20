@@ -4,7 +4,6 @@ from pathlib import Path
 
 import kaldi_native_fbank as knf
 import numpy as np
-import onnxruntime as ort
 from numpy.typing import NDArray
 
 from svs.extract import SAMPLE_RATE
@@ -35,6 +34,11 @@ class Embedder:
     """Runs the ONNX model on CUDA when available, otherwise on CPU."""
 
     def __init__(self, model_path: str | Path = MODEL_PATH) -> None:
+        # Imported here, so scripts that only read cached embeddings (trials, scores) never
+        # load onnxruntime. With it loaded, make trials crashed at exit (libc++ mutex) in
+        # 3 of 19 runs; without it, 0 of 30. The exact cause is not known (LOG.md).
+        import onnxruntime as ort
+
         available = ort.get_available_providers()
         providers = [p for p in ("CUDAExecutionProvider", "CPUExecutionProvider") if p in available]
         self.session = ort.InferenceSession(str(model_path), providers=providers)
