@@ -18,12 +18,14 @@ class FakeEmbedder:
         self.calls = 0
         self.fail_after = fail_after
         self.lengths: list[int] = []
+        self.powers: list[float] = []
 
     def embed(self, samples):
         if self.calls == self.fail_after:
             raise RuntimeError("interrupted")
         self.calls += 1
         self.lengths.append(len(samples))
+        self.powers.append(float(np.mean(samples.astype(np.float64) ** 2)))
         return np.ones(EMBEDDING_DIM, np.float32) / np.sqrt(EMBEDDING_DIM)
 
 
@@ -105,3 +107,19 @@ def test_speech_beyond_the_maximum_is_cut_and_not_counted(tmp_path, monkeypatch)
 
     assert embedder.lengths == [5 * 16000]
     np.testing.assert_allclose(np.load(tmp_path / "out" / "id1.npz")["net_seconds"], [5.0])
+
+
+def test_condition_degrades_the_audio_before_it_reaches_the_model(tmp_path):
+    wav, meta = make_tree(tmp_path, {"id1/v1/00001": "speech"})
+    clean, narrow = FakeEmbedder(), FakeEmbedder()
+    embed_all(clean, wav, meta, tmp_path / "clean")
+    embed_all(narrow, wav, meta, tmp_path / "narrow", condition="pcm8k")
+    # White noise spreads evenly up to 8 kHz; the 8 kHz channel keeps only the half below 4 kHz.
+    assert narrow.powers[0] == pytest.approx(clean.powers[0] / 2, rel=0.1)
+
+
+def test_rejects_audio_that_is_not_16khz(tmp_path):
+    path = tmp_path / "clip.wav"
+    sf.write(path, np.zeros(8000), 8000)
+    with pytest.raises(ValueError, match="16 kHz"):
+        embed_cache.embed_clips(FakeEmbedder(), [path])

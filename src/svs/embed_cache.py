@@ -6,11 +6,11 @@ from itertools import groupby
 from pathlib import Path
 
 import numpy as np
-import soundfile as sf
 from numpy.typing import NDArray
 
+from svs.degrade import CONDITIONS, degrade
 from svs.embed import EMBEDDING_DIM, Embedder
-from svs.extract import SAMPLE_RATE, extract_speech
+from svs.extract import SAMPLE_RATE, load_audio, speech_from_samples
 from svs.trials import MIN_SPEECH_SECONDS
 from svs.voxceleb import list_clips
 
@@ -19,18 +19,24 @@ from svs.voxceleb import list_clips
 MAX_SPEECH_SECONDS = 300.0
 
 
-def embed_clips(embedder: Embedder, paths: list[Path]) -> tuple[float, NDArray[np.float32]]:
+def embed_clips(
+    embedder: Embedder, paths: list[Path], condition: str = "pcm16k"
+) -> tuple[float, NDArray[np.float32]]:
     """Pooled net speech of clips from one session, and one embedding for all of it.
 
     VAD runs per clip, so the gaps between clips never count as speech. Speech beyond
     MAX_SPEECH_SECONDS is cut off; the seconds returned are what the model saw.
     The service refuses to score less than MIN_SPEECH_SECONDS of speech, so no embedding
     is computed for it. NaN makes any accidental use of the row visible as a NaN score.
+    Each clip is degraded to the condition before VAD, as the service sees channel audio.
     """
     speech = []
     for path in paths:
-        info = sf.info(str(path))
-        speech.append(extract_speech(path, [(0, info.frames * 1000 / info.samplerate)]).samples)
+        audio, rate = load_audio(path)
+        if rate != SAMPLE_RATE:
+            raise ValueError(f"{path} is {rate} Hz; the degradation harness expects 16 kHz")
+        audio, rate = degrade(audio, condition)
+        speech.append(speech_from_samples(audio, rate, [(0, len(audio) * 1000 / rate)]).samples)
     samples = np.concatenate(speech)[: int(MAX_SPEECH_SECONDS * SAMPLE_RATE)]
     seconds = len(samples) / SAMPLE_RATE
     if seconds < MIN_SPEECH_SECONDS:
@@ -44,6 +50,7 @@ def embed_all(
     meta_csv: str | Path,
     out_dir: str | Path,
     join_videos: bool = False,
+    condition: str = "pcm16k",
 ) -> int:
     """Write <out_dir>/<speaker>.npz for each speaker without a file; return how many.
 
@@ -68,7 +75,8 @@ def embed_all(
         else:
             units = [(c.utt_id, [c]) for c in clips]
         results = [
-            embed_clips(embedder, [wav_dir / f"{c.utt_id}.wav" for c in unit]) for _, unit in units
+            embed_clips(embedder, [wav_dir / f"{c.utt_id}.wav" for c in unit], condition)
+            for _, unit in units
         ]
         np.savez(
             path,
@@ -99,7 +107,10 @@ if __name__ == "__main__":
     parser.add_argument("meta_csv")
     parser.add_argument("out_dir")
     parser.add_argument("--join-videos", action="store_true", help="one embedding per video")
+    parser.add_argument("--condition", choices=CONDITIONS, default="pcm16k")
     args = parser.parse_args()
     start = time.perf_counter()
-    written = embed_all(Embedder(), args.wav_dir, args.meta_csv, args.out_dir, args.join_videos)
+    written = embed_all(
+        Embedder(), args.wav_dir, args.meta_csv, args.out_dir, args.join_videos, args.condition
+    )
     print(f"Wrote {written} speaker files in {time.perf_counter() - start:.0f} s")
