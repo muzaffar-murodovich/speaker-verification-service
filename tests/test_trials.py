@@ -94,10 +94,15 @@ def test_write_trials_writes_a_header_and_one_row_per_trial(tmp_path):
     path = tmp_path / "trials.tsv"
     assert write_trials(path, [("clip", Trial(A1, A3)), ("video", Trial(A3, B1))]) == 2
     assert path.read_text().splitlines() == [
-        "enrol\ttest\ttarget\tbucket\tsource",
-        "a1\ta3\t1\t3-10s\tclip",
-        "a3\tb1\t0\t30-120s\tvideo",
+        "enrol\ttest\ttarget\tbucket\tsource\tgender",
+        "a1\ta3\t1\t3-10s\tclip\tm",
+        "a3\tb1\t0\t30-120s\tvideo\tm",
     ]
+
+
+def test_write_trials_refuses_a_cross_gender_trial(tmp_path):
+    with pytest.raises(ValueError, match="Cross-gender trial: a1, c1"):
+        write_trials(tmp_path / "trials.tsv", [("clip", Trial(A1, C1))])
 
 
 def test_sampled_target_trials_stay_in_their_bucket():

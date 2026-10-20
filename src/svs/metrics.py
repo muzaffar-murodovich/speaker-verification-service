@@ -38,20 +38,31 @@ def eer(target: NDArray, nontarget: NDArray) -> tuple[float, float]:
     return float((miss[i] + false_alarm[i]) / 2), float(thresholds[i])
 
 
-def read_bucket_scores(path: str) -> dict[str, tuple[NDArray, NDArray]]:
-    """Target and non-target scores of each bucket of a score file, in BUCKETS order."""
-    scores = {bucket: {"1": [], "0": []} for bucket in BUCKETS}
+GENDERS = ("f", "m")
+
+
+def read_bucket_scores(path: str, by_gender: bool = False) -> dict[str, tuple[NDArray, NDArray]]:
+    """Target and non-target scores of each bucket of a score file, in BUCKETS order.
+
+    With by_gender the groups are "<bucket> <gender>" (SVS guide §8.3: reported for
+    fairness, not for tuning).
+    """
+    keys = [f"{b} {g}" for b in BUCKETS for g in GENDERS] if by_gender else list(BUCKETS)
+    scores = {key: {"1": [], "0": []} for key in keys}
     with open(path, newline="") as f:
         for r in csv.DictReader(f, delimiter="\t"):
-            scores[r["bucket"]][r["target"]].append(float(r["score"]))
-    return {b: (np.array(s["1"]), np.array(s["0"])) for b, s in scores.items()}
+            key = f"{r['bucket']} {r['gender']}" if by_gender else r["bucket"]
+            scores[key][r["target"]].append(float(r["score"]))
+    return {key: (np.array(s["1"]), np.array(s["0"])) for key, s in scores.items()}
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("scores_tsv")
     args = parser.parse_args()
-    print("bucket\tEER_%\tthreshold\tn_target\tn_nontarget")
-    for bucket, (target, nontarget) in read_bucket_scores(args.scores_tsv).items():
-        rate, threshold = eer(target, nontarget)
-        print(f"{bucket}\t{100 * rate:.3f}\t{threshold:.4f}\t{len(target)}\t{len(nontarget)}")
+    for by_gender in (False, True):
+        group = "bucket gender" if by_gender else "bucket"
+        print(f"{group}\tEER_%\tthreshold\tn_target\tn_nontarget")
+        for key, (target, nontarget) in read_bucket_scores(args.scores_tsv, by_gender).items():
+            rate, threshold = eer(target, nontarget)
+            print(f"{key}\t{100 * rate:.3f}\t{threshold:.4f}\t{len(target)}\t{len(nontarget)}")

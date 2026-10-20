@@ -136,12 +136,24 @@ def write_trials(path: str | Path, rows: Iterable[tuple[str, Trial]]) -> int:
     """Write (source, trial) rows as a tab-separated list with a header; return the count.
 
     source records where the audio came from, e.g. "clip" or "video" (SVS guide §8.1).
+    gender is the gender of both sides, for the per-gender breakdown (SVS guide §8.3);
+    a cross-gender trial has no single gender, so it is refused.
     """
     count = 0
     with open(path, "w", newline="") as f:
         writer = csv.writer(f, delimiter="\t", lineterminator="\n")
-        writer.writerow(["enrol", "test", "target", "bucket", "source"])
+        writer.writerow(["enrol", "test", "target", "bucket", "source", "gender"])
         for source, t in rows:
-            writer.writerow([t.enrol.utt_id, t.test.utt_id, int(t.is_target), t.bucket, source])
+            if t.enrol.gender != t.test.gender:
+                raise ValueError(f"Cross-gender trial: {t.enrol.utt_id}, {t.test.utt_id}")
+            row = [
+                t.enrol.utt_id,
+                t.test.utt_id,
+                int(t.is_target),
+                t.bucket,
+                source,
+                t.enrol.gender,
+            ]
+            writer.writerow(row)
             count += 1
     return count
