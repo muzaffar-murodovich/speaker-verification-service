@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
+from svs.degrade import CONDITIONS
 from svs.embed_cache import read_cache
 
 
@@ -44,6 +45,37 @@ def score_trials(
     return cosine_scores(enrol, test)
 
 
+def usable(
+    rows: list[dict[str, str]], caches: dict[str, dict[str, NDArray[np.float32]]]
+) -> NDArray[np.bool_]:
+    """True where both sides of a trial have an embedding.
+
+    A degraded clip can lose speech and fall below the 3.0 s minimum (SVS guide §4.4).
+    The service refuses to score it, so such trials are counted, not scored.
+    """
+
+    def has_embedding(row: dict[str, str], side: str) -> bool:
+        return bool(np.isfinite(caches[row["source"]][row[side]]).all())
+
+    return np.array([has_embedding(r, "enrol") and has_embedding(r, "test") for r in rows])
+
+
+def score_condition(
+    rows: list[dict[str, str]],
+    caches: dict[str, dict[str, NDArray[np.float32]]],
+    condition: str,
+) -> tuple[list[dict[str, str]], NDArray[np.float64], int]:
+    """Scored rows tagged with the condition, their scores, and how many were refused."""
+    keep = usable(rows, caches)
+    refused = int((~keep).sum())
+    # The trial list was built from clean audio above the minimum, so clean refusals are a bug.
+    if condition == "pcm16k" and refused:
+        raise ValueError(f"{refused} clean trials have no embedding")
+    # SVS guide §8.1: condition metadata is recorded per trial.
+    kept = [{**r, "condition": condition} for r, k in zip(rows, keep, strict=True) if k]
+    return kept, score_trials(kept, caches), refused
+
+
 def write_scores(path: str | Path, rows: list[dict[str, str]], scores: NDArray) -> None:
     """The trial rows with a score column added, in the same order."""
     with open(path, "w", newline="") as f:
@@ -60,11 +92,13 @@ if __name__ == "__main__":
     parser.add_argument("clip_cache")
     parser.add_argument("video_cache")
     parser.add_argument("out_tsv")
+    parser.add_argument("--condition", choices=CONDITIONS, default="pcm16k")
     args = parser.parse_args()
     with open(args.trials_tsv, newline="") as f:
         rows = list(csv.DictReader(f, delimiter="\t"))
     caches = {"clip": load_embeddings(args.clip_cache), "video": load_embeddings(args.video_cache)}
-    scores = score_trials(rows, caches)
+    rows, scores, refused = score_condition(rows, caches, args.condition)
+    print(f"{args.condition}: refused {refused} trials (speech below 3.0 s)")
     Path(args.out_tsv).parent.mkdir(parents=True, exist_ok=True)
     write_scores(args.out_tsv, rows, scores)
     print(f"Wrote {len(scores)} scores to {args.out_tsv}")

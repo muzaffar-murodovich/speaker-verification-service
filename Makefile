@@ -1,8 +1,8 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup g729 model data musan embeddings embeddings-videos trials duplicates scores eer det test lint format eval clean
+.PHONY: help setup g729 model data musan degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores eer det test lint format eval clean
 
 help: ## Show available targets
-	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
+	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
 
 setup: ## Create .venv and install the project with dev tools (needs uv)
 	uv sync
@@ -96,7 +96,29 @@ trials: | $(EMB_DIR)/.done $(EMB_DIR)-videos/.done $(DUPLICATES) ## Build the tr
 SCORES := artifacts/scores/voxceleb1-cosine.tsv
 
 scores: ## Cosine score of every trial in the VoxCeleb1 trial list
-	uv run python -m svs.score $(TRIALS) $(EMB_DIR) $(EMB_DIR)-videos $(SCORES)
+	uv run python -m svs.score $(TRIALS) $(EMB_DIR) $(EMB_DIR)-videos $(SCORES) --condition pcm16k
+
+# D6: the same trials under each degraded condition (handbook §3.3, SVS guide §8.1).
+# Bucket and pairs come from the clean trial list; only the audio changes. A trial
+# whose degraded audio falls below 3.0 s of speech is refused and counted, not scored.
+DEGRADED := pcm8k g711a g711u g729 opus noise15 noise5
+COND_DIR := artifacts/embeddings/conditions
+COND_SCORES := $(DEGRADED:%=artifacts/scores/voxceleb1-%-cosine.tsv)
+
+$(COND_DIR)/%/clips/.done: | $(MODEL) $(VOX_DIR)/.unpacked $(G729) $(MUSAN_DIR)/.unpacked
+	uv run python -m svs.embed_cache $(VOX_DIR)/wav $(META) $(dir $@) --condition $*
+	touch $@
+
+$(COND_DIR)/%/videos/.done: | $(MODEL) $(VOX_DIR)/.unpacked $(G729) $(MUSAN_DIR)/.unpacked
+	uv run python -m svs.embed_cache $(VOX_DIR)/wav $(META) $(dir $@) --join-videos --condition $*
+	touch $@
+
+degraded-embeddings: $(DEGRADED:%=$(COND_DIR)/%/clips/.done) $(DEGRADED:%=$(COND_DIR)/%/videos/.done) ## Embed clips and videos under every degraded condition (long; see LOG.md)
+
+artifacts/scores/voxceleb1-%-cosine.tsv: $(COND_DIR)/%/clips/.done $(COND_DIR)/%/videos/.done
+	uv run python -m svs.score $(TRIALS) $(COND_DIR)/$*/clips $(COND_DIR)/$*/videos $@ --condition $*
+
+degraded-scores: $(COND_SCORES) ## Score the clean trial list under every degraded condition
 
 eer: ## EER per duration bucket from the score file
 	uv run python -m svs.metrics $(SCORES)

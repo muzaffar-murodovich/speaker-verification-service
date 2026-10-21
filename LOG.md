@@ -401,3 +401,68 @@ Numbers live in `experiments.csv`; this file explains them.
   one of them stopping `make eval`. Commit 0ce4aa9 imports onnxruntime only when a model
   is built; after: 0 crashes in 30 runs. The crash is gone in practice; its exact
   cause (a libc++ mutex at interpreter exit) is not known.
+
+## 2026-10-21 — D6 degradation harness and per-condition scoring
+
+Handbook D6 asks for 8 kHz, G.711 A-law/µ-law, G.729, Opus and noise at a controlled
+SNR, and for the eval set to be rebuilt and tagged by condition. The code is done
+(`src/svs/degrade.py`, `make degraded-embeddings`, `make degraded-scores`); the
+embedding run is not, it waits for the GPU decision. No EER under any condition yet.
+
+**Conditions** (names follow the codec labels of SVS guide §8.3):
+
+| condition | what is done to clean 16 kHz audio | rate given to VAD |
+| --- | --- | --- |
+| pcm16k | nothing (the D5 baseline) | 16 kHz |
+| pcm8k | resample to 8 kHz with an anti-alias filter | 8 kHz |
+| g711a / g711u | pcm8k, then G.711 A-law / µ-law encode and decode (libsndfile) | 8 kHz |
+| g729 | pcm8k, then G.729 Annex A encode and decode (bcg729) | 8 kHz |
+| opus | Opus 16 kbit/s, VoIP mode, encode and decode (ffmpeg libopus) | 16 kHz |
+| noise15 / noise5 | MUSAN noise added at 15 / 5 dB SNR, no codec | 16 kHz |
+
+**Choices where the handbook and the SVS guide are silent** (the mentor may disagree):
+
+1. Opus bitrate 16 kbit/s: the low end of RFC 7587 §3.1.1's wideband-speech range.
+2. G.729: ffmpeg 9.0.2 decodes but cannot encode it. `tools/g729.c` wraps bcg729
+   (Homebrew/Ubuntu `libbcg729`, GPL-3); `make g729` builds it into artifacts/, so no
+   GPL binary is committed. Its VAD/DTX is off; its 5 ms look-ahead lag is kept.
+3. SNR levels 15 and 5 dB: inside the 5-25 dB range of the guide's quality score
+   (Appendix C), 5 dB at its worst end. Power is the mean square over the whole
+   clip, silence included, so the SNR within speech is somewhat better.
+4. Noise files shorter than 3.0 s are not used (155 of 930, 3.9 of 374 minutes,
+   including the one near-silent file): repeated, they become a periodic click.
+5. The utt_id picks the noise file and offset through CRC32 (Python's hash() changes
+   per process), so every machine, and both SNR levels, use the same noise piece.
+6. Trials keep the pairs and duration buckets of the clean list; only the audio
+   changes. A trial whose degraded audio has under 3.0 s of speech is refused and
+   counted, as the service would refuse it (SVS guide §4.4). Each condition can
+   therefore score slightly fewer trials; every EER will carry its own trial count.
+
+**MUSAN** (`make musan`, CC BY 4.0, OpenSLR MD5 checked): noise/ has 930 files
+(free-sound 843, sound-bible 87), all 16 kHz mono, 6.23 h; 775 are used.
+
+**Checks.**
+- The clean score file now has a `condition` column (pcm16k). Without it the file is
+  byte-identical to the D5 run (SHA-256 4bc1910b…), and `make eer` prints the same
+  EERs; eval.sha256 holds the new SHA-256 (c6e2455e…). 0 clean trials refused.
+- Smoke run, one speaker (id10899, 168 clips, Mac): clips under 3.0 s of speech —
+  clean 1, g729 0, noise5 9. Under noise5 the VAD found more speech in 71 clips (up to
+  +1.26 s) and less in 87 (down to −6.82 s): WebRTC VAD both takes noise for speech and
+  loses speech in noise. Under g729 the change was −0.46 to +1.36 s. One speaker only;
+  the refusal counts of the full run will be reported per condition in D7.
+
+**Cost.** The trial list uses 145,337 audio items (134,906 clips, 10,431 videos):
+91.2 % / 85.7 % of the clip / video speech seconds. Scaled from the measured D3/D4 runs
+(12,487 s / 11,550 s on the home PC), one condition is about 5.9 h, seven about 41 h,
+on CPU. Opus costs ~127 ms per clip on the Mac against ~27 ms for the others (two
+ffmpeg processes per clip, one-clip timing); worth fixing only if CPU-bound.
+
+**Open items for the mentor**
+
+8. GPU (L40S) access for the ~41 h of degraded embeddings (decision expected 2026-10-21).
+9. The choices 1-6 above.
+
+**Next.** D7 (EER per condition) needs the degraded embeddings, so D8 (AS-Norm) comes
+first, on clean audio. All 1,251 VoxCeleb1 speakers are in the trial list, so a
+disjoint impostor cohort cannot come from VoxCeleb1; the plan is VoxCeleb2, with
+disjointness checked before use.
