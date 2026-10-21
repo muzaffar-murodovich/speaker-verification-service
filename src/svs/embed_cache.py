@@ -29,13 +29,15 @@ def embed_clips(
     The service refuses to score less than MIN_SPEECH_SECONDS of speech, so no embedding
     is computed for it. NaN makes any accidental use of the row visible as a NaN score.
     Each clip is degraded to the condition before VAD, as the service sees channel audio.
+    The clip's utt_id picks its noise, so a clip gets the same noise alone and in a video.
     """
     speech = []
     for path in paths:
         audio, rate = load_audio(path)
         if rate != SAMPLE_RATE:
             raise ValueError(f"{path} is {rate} Hz; the degradation harness expects 16 kHz")
-        audio, rate = degrade(audio, condition)
+        utt_id = "/".join(path.with_suffix("").parts[-3:])
+        audio, rate = degrade(audio, condition, noise_key=utt_id)
         speech.append(speech_from_samples(audio, rate, [(0, len(audio) * 1000 / rate)]).samples)
     samples = np.concatenate(speech)[: int(MAX_SPEECH_SECONDS * SAMPLE_RATE)]
     seconds = len(samples) / SAMPLE_RATE
