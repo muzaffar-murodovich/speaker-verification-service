@@ -18,3 +18,5 @@ artifacts/
 
 # IDE
 .vscode
+# Home-PC scheduler (local only)
+/tools/night-run.sh

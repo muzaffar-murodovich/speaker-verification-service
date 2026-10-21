@@ -1,5 +1,7 @@
 """Embedding cache: short clips get no embedding, and a rerun resumes instead of redoing work."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import soundfile as sf
@@ -71,6 +73,21 @@ def test_interrupted_speaker_leaves_no_file(tmp_path):
     wav, meta = make_tree(tmp_path, {"id1/v1/00001": "speech", "id1/v1/00002": "speech"})
     with pytest.raises(RuntimeError):
         embed_all(FakeEmbedder(fail_after=1), wav, meta, tmp_path / "out")
+    assert not (tmp_path / "out" / "id1.npz").exists()
+
+
+def test_stop_while_writing_leaves_no_file_that_a_rerun_would_skip(tmp_path, monkeypatch):
+    def half_write(file, **arrays):
+        if hasattr(file, "write"):
+            file.write(b"half")
+        else:
+            Path(file).write_bytes(b"half")
+        raise RuntimeError("stopped mid-write")
+
+    wav, meta = make_tree(tmp_path, {"id1/v1/00001": "speech"})
+    monkeypatch.setattr(embed_cache.np, "savez", half_write)
+    with pytest.raises(RuntimeError):
+        embed_all(FakeEmbedder(), wav, meta, tmp_path / "out")
     assert not (tmp_path / "out" / "id1.npz").exists()
 
 

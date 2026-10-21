@@ -80,12 +80,17 @@ def embed_all(
             embed_clips(embedder, [wav_dir / f"{c.utt_id}.wav" for c in unit], condition)
             for _, unit in units
         ]
-        np.savez(
-            path,
-            utt_ids=np.array([unit_id for unit_id, _ in units]),
-            net_seconds=np.array([seconds for seconds, _ in results]),
-            embeddings=np.stack([embedding for _, embedding in results]),
-        )
+        # Write under a name read_cache ignores, then rename: a stop mid-write (a run
+        # killed on a time limit) leaves only a .part file, never a broken id*.npz.
+        part = path.with_suffix(".npz.part")
+        with open(part, "wb") as f:
+            np.savez(
+                f,
+                utt_ids=np.array([unit_id for unit_id, _ in units]),
+                net_seconds=np.array([seconds for seconds, _ in results]),
+                embeddings=np.stack([embedding for _, embedding in results]),
+            )
+        part.replace(path)
         written += 1
         print(f"{speaker}: {len(units)} {'videos' if join_videos else 'clips'}", flush=True)
     return written
