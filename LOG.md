@@ -466,3 +466,65 @@ ffmpeg processes per clip, one-clip timing); worth fixing only if CPU-bound.
 first, on clean audio. All 1,251 VoxCeleb1 speakers are in the trial list, so a
 disjoint impostor cohort cannot come from VoxCeleb1; the plan is VoxCeleb2, with
 disjointness checked before use.
+
+## 2026-10-21 — D8 AS-Norm with a fixed, versioned, disjoint cohort
+
+Handbook D8: a fixed, versioned impostor cohort (2,000-5,000), top-n cohort scores,
+symmetric z-score, profile-side statistics cached. SVS guide §4.3 gives the formula,
+n = 300 (CFG_SV_COHORT_TOP_N) and the 1e-6 on the spread; both are used as given.
+
+**Cohort `voxceleb2-dev-v1`** (`make cohort`, list in `cohorts/voxceleb2-dev-v1.tsv`):
+5,000 VoxCeleb2 dev speakers, one clip each. Net speech per clip: 3.00-60.14 s,
+median 5.34 s (4,343 in 3-10 s, 635 in 10-30 s, 22 over 30 s); 3,052 male, 1,948
+female. 52 clips had under 3.0 s of speech and gave their place to the next speaker.
+Build: 19 min on the Mac (download 1.1 GB of wav after decoding); a second build
+from the cached wavs gave a byte-identical list and identical embeddings.
+
+**Disjointness.** VoxCeleb1 and VoxCeleb2 number speakers separately, so ids prove
+nothing, and vox2_meta.csv has no names. Names come from VGGFace2's identity_meta.csv
+(pinned revision, SHA-256 checked) and are compared in one spelling (case, `_`, `-`,
+`.` ignored). VoxCeleb2 *test* holds two VoxCeleb1 trial speakers spelled differently:
+Candace_Cameron-Bure = id10123, Maria_Canals_Barrera = id10736 (1,473 trial rows). An
+exact-string check would have missed both. VoxCeleb2 dev (5,994 speakers) shares no
+name with the 1,251 VoxCeleb1 speakers; `svs.cohort` asserts this on every build
+(SVS guide pitfall 15), and tests/test_cohort.py uses the real Candace pair.
+
+**Choices where the handbook and the SVS guide are silent** (the mentor may disagree):
+
+10. Size 5,000, the handbook's upper end; the guide's 20,000 default is for production.
+11. One clip per speaker, so the top 300 impostors of an audio come from many voices.
+    Speakers and clips are picked in CRC32 order (same on every machine).
+12. VoxCeleb2 dev, although the model was trained on it: it is the only large source
+    with names to prove disjointness, and VoxCeleb2 test has 120 speakers, two of them
+    in our trials. WeSpeaker's recipe does the same (examples/voxceleb/v2/run.sh:
+    `--cohort_set vox2_dev`, `top_n=300`).
+13. The archive is 77.5 GB in eight parts; only its directory (145.7 MB) and the 5,100
+    chosen members are read, by HTTP range requests, each checked against its CRC32.
+    AAC is decoded to 16 kHz wav by ffmpeg 9.0.2; another ffmpeg version may decode a
+    clip slightly differently, and `make cohort` fails if the list changes.
+14. Cohort audio is clean 16 kHz. The guide wants the cohort to match the production
+    condition mix; for degraded conditions it must be degraded the same way (M2, later).
+
+**Result, clean 16 kHz** (VoxCeleb1 trials sha256 7eb0eefa, 549,856 trials, 0 refused;
+AS-Norm scores sha256 367d84aa):
+
+| bucket | EER cosine | EER AS-Norm | n_target / n_nontarget |
+| --- | --- | --- | --- |
+| 3-10 s | 1.560 % | 1.448 % | 50,000 / 100,000 |
+| 10-30 s | 0.602 % | 0.582 % | 50,000 / 100,000 |
+| 30-120 s | 0.642 % | 0.559 % | 46,754 / 100,000 |
+| > 120 s | 0.355 % | 0.322 % | 3,102 / 100,000 |
+
+Lower in every bucket; per gender lower in 7 of 8 cells, equal in > 120 s female
+(0.555 %, only 1,080 targets). The gain on clean wideband audio is small, as the guide
+expects (it says AS-Norm is worth several points on telephony). The EER threshold now
+grows from 1.99 (3-10 s) to 3.97 (> 120 s): AS-Norm does not remove the need for
+duration-dependent thresholds (D9).
+
+**Open items for the mentor**
+
+10. The choices 10-14 above.
+
+**Next.** M2 needs EER with and without AS-Norm per condition, with the gain on degraded
+8 kHz audio: the degraded embeddings (night runs on the home PC since 2026-10-21) and a
+cohort degraded per condition.
