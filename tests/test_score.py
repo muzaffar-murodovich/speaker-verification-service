@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from svs.score import cosine_scores, score_condition, score_trials, write_scores
+from svs.score import asnorm_scores, cosine_scores, score_condition, score_trials, write_scores
 
 
 def test_cosine_of_known_pairs():
@@ -74,3 +74,27 @@ def test_every_scored_trial_carries_its_condition():
 def test_a_refused_clean_trial_is_a_bug():
     with pytest.raises(ValueError, match="2 clean trials"):
         score_condition(ROWS, CACHES, "pcm16k")
+
+
+def test_asnorm_uses_each_audio_s_own_cohort_statistics():
+    # Two audio with the same raw score against a third; "a" sits near the cohort.
+    caches = {
+        "clip": {"a": np.array([1.0, 0.0]), "b": np.array([0.0, 1.0]), "c": np.array([0.6, 0.8])}
+    }
+    cohort = np.array([[1.0, 0.1], [1.0, -0.1], [0.9, 0.0]])
+    rows = [
+        {"enrol": "a", "test": "c", "source": "clip"},
+        {"enrol": "b", "test": "c", "source": "clip"},
+    ]
+    raw = score_trials(rows, caches)
+    got = asnorm_scores(rows, caches, raw, cohort, n=3)
+
+    unit = cohort / np.linalg.norm(cohort, axis=1, keepdims=True)
+
+    def z(x, side):
+        top = np.sort(unit @ caches["clip"][side])[-3:]
+        return (x - top.mean()) / (top.std() + 1e-6)
+
+    want = [0.5 * (z(raw[0], "a") + z(raw[0], "c")), 0.5 * (z(raw[1], "b") + z(raw[1], "c"))]
+    np.testing.assert_allclose(got, want)
+    assert got[0] < got[1]  # a is close to the impostors, so its score counts for less

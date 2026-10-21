@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup g729 model data musan degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores eer det test lint format eval clean
+.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm det test lint format eval clean
 
 help: ## Show available targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -26,6 +26,10 @@ $(MODEL):
 	curl -fL -o $(MODEL) https://huggingface.co/Wespeaker/wespeaker-ecapa-tdnn512-LM/resolve/$(MODEL_REV)/$(notdir $(MODEL))
 	echo "$(MODEL_SHA)  $(MODEL)" | shasum -a 256 -c
 
+# The mirror is gated (since about 2026-10-21): accept its terms on Hugging Face, then
+# `hf auth login`, or set HF_TOKEN.
+HF_AUTH = Authorization: Bearer $${HF_TOKEN:-$$(cat $$HOME/.cache/huggingface/token)}
+
 # VoxCeleb1 from a Hugging Face mirror at a pinned revision. voxceleb1.sha256 holds the
 # official Oxford checksums (the same values torchaudio's VoxCeleb1 loader uses), so a
 # passing check proves the mirror files are the original archives.
@@ -39,7 +43,7 @@ data: $(VOX_DIR)/.unpacked ## Download VoxCeleb1 (~34 GB), verify checksums, unp
 $(VOX_DIR)/.unpacked:
 	mkdir -p $(VOX_DIR)/archives
 	for f in $(VOX_FILES); do \
-		curl -fL -C - --retry 20 --retry-all-errors --retry-delay 10 -o $(VOX_DIR)/archives/$$f $(VOX_URL)/$$f || exit 1; \
+		curl -fL -C - --retry 20 --retry-all-errors --retry-delay 10 -H "$(HF_AUTH)" -o $(VOX_DIR)/archives/$$f $(VOX_URL)/$$f || exit 1; \
 	done
 	cd $(VOX_DIR)/archives && shasum -a 256 -c $(CURDIR)/voxceleb1.sha256
 	cat $(VOX_DIR)/archives/vox1_dev_wav_parta? > $(VOX_DIR)/vox1_dev_wav.zip
@@ -63,6 +67,34 @@ $(MUSAN_DIR)/.unpacked:
 	test "$$(openssl md5 < $(MUSAN_DIR)/musan.tar.gz | awk '{print $$NF}')" = "$(MUSAN_MD5)"
 	tar -xzf $(MUSAN_DIR)/musan.tar.gz -C data musan/noise
 	touch $@
+
+# D8 impostor cohort: 5,000 VoxCeleb2 dev speakers, one clip each, read from the split
+# archive by HTTP range requests (~20 min). The build refuses a speaker whose name is in
+# VoxCeleb1. cohorts/ holds the committed list; a build that differs from it is a new
+# cohort version, so make fails instead of overwriting it.
+VOX2_DIR := data/voxceleb2
+VOX2_META := $(VOX2_DIR)/vox2_meta.csv
+VOX2_META_SHA := 9a4f437fcf78b8030e597941703ab82a4d1af314f6eba3952afafe8a3664bd1b
+VGG_META := $(VOX2_DIR)/identity_meta.csv
+VGG_META_URL := https://huggingface.co/datasets/ProgramComputer/VGGFace2/resolve/5a803a046e9532232c381f3419b13aab5b565189/meta/identity_meta.csv
+VGG_META_SHA := 3e0caaeb1cc30bf784edbfdf77e988cfedb56eaf3d2ba87d7724e4a8f7ff737f
+COHORT := artifacts/cohort/voxceleb2-dev-v1
+
+$(VOX2_META):
+	mkdir -p $(VOX2_DIR)
+	curl -fL -H "$(HF_AUTH)" -o $@ https://huggingface.co/datasets/ProgramComputer/voxceleb/resolve/$(VOX_REV)/vox2/vox2_meta.csv
+	echo "$(VOX2_META_SHA)  $@" | shasum -a 256 -c
+
+$(VGG_META):
+	mkdir -p $(VOX2_DIR)
+	curl -fL -H "$(HF_AUTH)" -o $@ $(VGG_META_URL)
+	echo "$(VGG_META_SHA)  $@" | shasum -a 256 -c
+
+cohort: $(COHORT).npz ## Build the AS-Norm cohort from VoxCeleb2 dev and check it equals cohorts/
+
+$(COHORT).npz: | $(MODEL) $(VOX_DIR)/.unpacked $(VOX2_META) $(VGG_META)
+	uv run python -m svs.cohort $(META) $(VOX2_META) $(VGG_META) $(VOX2_DIR)/wav $(COHORT).tsv $@
+	cmp $(COHORT).tsv cohorts/$(notdir $(COHORT)).tsv || { rm $@; exit 1; }
 
 # Each long step writes a .done file when it finishes, so make skips it next time.
 # An interrupted run writes none, and the rerun resumes where it stopped.
@@ -122,6 +154,14 @@ degraded-scores: $(COND_SCORES) ## Score the clean trial list under every degrad
 
 eer: ## EER per duration bucket from the score file
 	uv run python -m svs.metrics $(SCORES)
+
+ASNORM_SCORES := artifacts/scores/voxceleb1-asnorm.tsv
+
+asnorm-scores: $(COHORT).npz ## AS-Norm score of every clean trial against the cohort
+	uv run python -m svs.score $(TRIALS) $(EMB_DIR) $(EMB_DIR)-videos $(ASNORM_SCORES) --condition pcm16k --cohort $(COHORT).npz
+
+eer-asnorm: ## EER per duration bucket from the AS-Norm score file
+	uv run python -m svs.metrics $(ASNORM_SCORES)
 
 DET := artifacts/plots/voxceleb1-det.png
 
