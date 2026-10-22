@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm det test lint format eval clean
+.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm operating-points det test lint format eval clean
 
 help: ## Show available targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -162,6 +162,11 @@ asnorm-scores: $(COHORT).npz ## AS-Norm score of every clean trial against the c
 
 eer-asnorm: ## EER per duration bucket from the AS-Norm score file
 	uv run python -m svs.metrics $(ASNORM_SCORES)
+
+OPERATING_POINTS := artifacts/calibration/voxceleb1-pcm16k.tsv
+
+operating-points: ## STRONG and PROBABLE threshold per bucket from FRR at a fixed FAR
+	uv run python -m svs.calibrate $(EMB_DIR) $(EMB_DIR)-videos $(META) $(COHORT).npz $(ASNORM_SCORES) $(OPERATING_POINTS)
 
 DET := artifacts/plots/voxceleb1-det.png
 
