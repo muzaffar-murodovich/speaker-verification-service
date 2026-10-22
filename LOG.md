@@ -528,3 +528,62 @@ duration-dependent thresholds (D9).
 **Next.** M2 needs EER with and without AS-Norm per condition, with the gain on degraded
 8 kHz audio: the degraded embeddings (night runs on the home PC since 2026-10-21) and a
 cohort degraded per condition.
+
+## 2026-10-22 — D9 (in progress): thresholds from FRR at a fixed FAR, clean audio
+
+Handbook D9: calibrate per condition, choose thresholds from FRR at a fixed FAR (not
+from EER), four bands. SVS guide §8.4 step 4: STRONG at the FAR where
+`N_expected × FAR ≤ 0.1`, PROBABLE at about 10 × that FAR. Only clean 16 kHz (pcm16k)
+so far: the degraded embeddings are still running on the home PC.
+
+**The FAR chosen, and why.** The guide ties STRONG to the target pool size (§4.6) but
+names no size for an evaluation. N = 50,000 = `CFG_SV_MAX_AUTO_POOL`: above it the
+service never assigns automatically, so STRONG must hold for every pool up to it.
+STRONG FAR = 0.1 / 50,000 = 2e-6; PROBABLE FAR = 2e-5. Constants in `svs.calibrate`.
+
+**Why the trial list's non-targets are not enough.** With 100,000 non-targets per
+bucket, a FAR of 1e-5 allows one false accept, so its threshold is set by a single
+trial. Probe on 3-10s (AS-Norm): the thresholds for FAR 1e-3 / 1e-4 / 1e-5 from the
+100,000 gave 1.18e-3 / 0.96e-4 / 1.9e-5 on 1,000,000 fresh non-targets. The first two
+held (they rest on 99 and 10 false accepts); the last was off by 2×.
+
+**Non-targets for calibration** (commit 3dcc0b4): `nontarget_pairs` draws distinct
+same-gender, different-speaker pairs of one bucket in numpy, with the rules of the
+trial list, seed 0. They are not written to a file; the seed and the code give the same
+pairs. Available pairs: 3-10s 5,747,898,297; 10-30s 211,472,369; 30-120s 26,429,032;
+>120s 1,244,644. 5,000,000 per bucket gives about 10 false accepts at 2e-6; >120s uses
+all of its 1,244,644.
+
+**Operating points** (commit 06dba57, `make operating-points`, 28 s, 3.6 GB on the Mac;
+artifacts/calibration/voxceleb1-pcm16k.tsv, SHA-256 8906f8b4…, identical on 3 runs).
+AS-Norm, cohort voxceleb2-dev-v1; FRR over the trial list's targets
+(experiments.csv d9-op-*):
+
+| bucket | PROBABLE threshold | FRR | STRONG threshold | FRR | false accepts at STRONG (speaker pairs) | non-targets / targets |
+| --- | --- | --- | --- | --- | --- | --- |
+| 3-10 s | 6.0756 | 23.90 % | 6.6948 | 33.30 % | 10 (9) | 5,000,000 / 50,000 |
+| 10-30 s | 6.4298 | 9.30 % | 7.2218 | 17.38 % | 10 (10) | 5,000,000 / 50,000 |
+| 30-120 s | 6.7363 | 6.49 % | 7.6520 | 13.36 % | 10 (8) | 5,000,000 / 46,754 |
+| > 120 s | 6.7582 | 4.35 % | 7.4228 | 8.09 % | 2 (2) | 1,244,644 / 3,102 |
+
+- At the same FAR, FRR falls from 33.30 % (3-10 s) to 8.09 % (> 120 s): one threshold
+  for all durations would be wrong for at least one of them (SVS guide §4.4).
+- The false accepts come from many speaker pairs (8-10 of 10), not one look-alike pair.
+- > 120 s STRONG rests on 2 false accepts and is not reliable; that is why its threshold
+  is below the 30-120 s one. VoxCeleb1 has no more long videos.
+- The thresholds are far above the guide's reference STRONG values (0.86-1.34). Not
+  explained yet; the reference comes from different data and the guide says ours will
+  differ.
+
+**Choices where the handbook and the SVS guide are silent** (the mentor may disagree):
+
+15. N = 50,000 (`CFG_SV_MAX_AUTO_POOL`) as the pool size of the STRONG rule.
+16. Calibration non-targets are fresh pairs (5,000,000 per bucket), not the trial
+    list's 100,000, so the STRONG threshold rests on about 10 false accepts.
+
+**Not done yet:** precision and recall per threshold, the WEAK floor, the band function,
+per-condition tables (needs the degraded embeddings), thresholds for smaller pools.
+
+**Open items for the mentor**
+
+11. The choices 15-16 above.
