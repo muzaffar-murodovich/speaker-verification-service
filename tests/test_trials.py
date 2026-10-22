@@ -1,11 +1,18 @@
 """Trial guards: a same-session target trial must never be built (SVS guide §8.1)."""
 
+import random
+from itertools import combinations
+
+import numpy as np
 import pytest
 
 from svs.trials import (
+    BUCKETS,
     Trial,
     Utterance,
+    count_nontarget_pairs,
     duration_bucket,
+    nontarget_pairs,
     nontarget_trials,
     sample_target_trials,
     target_trials,
@@ -140,3 +147,44 @@ def test_nontarget_trials_keep_only_pairs_of_the_requested_bucket():
     }
     with pytest.raises(ValueError, match="only"):
         nontarget_trials(ALL, n=4, bucket="10-30s")
+
+
+def many_utterances(seed: int = 0) -> list[Utterance]:
+    """30 speakers (15 m, 15 f) with 6 clips each, net speech 3 to 200 s."""
+    rng = random.Random(seed)
+    return [
+        Utterance(f"s{s:02d}/{k}", f"s{s:02d}", f"v{k}", "mf"[s % 2], rng.uniform(3.0, 200.0))
+        for s in range(30)
+        for k in range(6)
+    ]
+
+
+def brute_force_nontarget_pairs(utts: list[Utterance], bucket: str) -> set[tuple[int, int]]:
+    """Every index pair (i < j) that nontarget_trials could return for the bucket."""
+    return {
+        (i, j)
+        for (i, a), (j, b) in combinations(enumerate(utts), 2)
+        if a.speaker != b.speaker and a.gender == b.gender and Trial(a, b).bucket == bucket
+    }
+
+
+@pytest.mark.parametrize("bucket", BUCKETS)
+def test_nontarget_pairs_return_every_pair_when_n_covers_them(bucket):
+    utts = many_utterances()
+    expected = brute_force_nontarget_pairs(utts, bucket)
+    assert count_nontarget_pairs(utts, bucket) == len(expected)
+    i, j = nontarget_pairs(utts, n=len(expected), bucket=bucket)
+    assert set(zip(i.tolist(), j.tolist(), strict=True)) == expected
+    assert len(i) == len(expected)
+
+
+def test_nontarget_pairs_sample_n_distinct_valid_pairs():
+    utts = many_utterances()
+    valid = brute_force_nontarget_pairs(utts, "3-10s")
+    n = len(valid) // 2
+    i, j = nontarget_pairs(utts, n=n, bucket="3-10s", seed=3)
+    pairs = list(zip(i.tolist(), j.tolist(), strict=True))
+    assert len(pairs) == len(set(pairs)) == n
+    assert set(pairs) <= valid
+    again = nontarget_pairs(utts, n=n, bucket="3-10s", seed=3)
+    assert all(np.array_equal(a, b) for a, b in zip((i, j), again, strict=True))

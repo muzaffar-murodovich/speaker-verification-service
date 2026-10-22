@@ -5,15 +5,19 @@ import math
 import random
 from bisect import bisect_right
 from collections import defaultdict
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
+
+import numpy as np
+from numpy.typing import NDArray
 
 MIN_SPEECH_SECONDS = 3.0  # CFG_SV_MIN_SPEECH_SECONDS: below this the service refuses to score.
 BUCKET_EDGES = (10.0, 30.0, 120.0)
 BUCKETS = ("3-10s", "10-30s", "30-120s", ">120s")  # SVS guide §4.4, §8.3
 BUCKET_STARTS = dict(zip(BUCKETS, (MIN_SPEECH_SECONDS, *BUCKET_EDGES), strict=True))
+BUCKET_ENDS = dict(zip(BUCKETS, (*BUCKET_EDGES, math.inf), strict=True))
 
 
 def duration_bucket(seconds: float) -> str:
@@ -130,6 +134,82 @@ def nontarget_trials(
     if len(trials) < n:
         raise ValueError(f"Found only {len(trials)} distinct non-target pairs, need {n}")
     return trials
+
+
+def _in_bucket(seconds: NDArray[np.float64], bucket: str) -> NDArray[np.bool_]:
+    return (seconds >= BUCKET_STARTS[bucket]) & (seconds < BUCKET_ENDS[bucket])
+
+
+def count_nontarget_pairs(utterances: Sequence[Utterance], bucket: str) -> int:
+    """Number of same-gender, different-speaker pairs whose shorter clip is in bucket.
+
+    With A clips inside the bucket and B above it, A(A-1)/2 + A*B pairs have their shorter
+    side inside; the same count within each speaker is taken off.
+    """
+
+    def pairs(group: list[Utterance]) -> int:
+        start, end = BUCKET_STARTS[bucket], BUCKET_ENDS[bucket]
+        inside = sum(start <= u.duration < end for u in group)
+        above = sum(u.duration >= end for u in group)
+        return inside * (inside - 1) // 2 + inside * above
+
+    by_gender: dict[str, list[Utterance]] = defaultdict(list)
+    by_speaker: dict[str, list[Utterance]] = defaultdict(list)
+    for utt in utterances:
+        by_gender[utt.gender].append(utt)
+        by_speaker[utt.speaker].append(utt)
+    return sum(map(pairs, by_gender.values())) - sum(map(pairs, by_speaker.values()))
+
+
+def nontarget_pairs(
+    utterances: Sequence[Utterance], n: int, bucket: str, seed: int = 0
+) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
+    """Index pairs (i < j) into utterances: n distinct non-target pairs of one bucket.
+
+    Same rules as nontarget_trials (different speakers, same gender, shorter clip in the
+    bucket), but in numpy, for the millions of pairs a FAR of 1e-6 needs. If fewer than n
+    exist, all of them are returned.
+    """
+    seconds = np.array([u.duration for u in utterances])
+    speaker = np.unique([u.speaker for u in utterances], return_inverse=True)[1]
+    gender = np.unique([u.gender for u in utterances], return_inverse=True)[1]
+    eligible = np.flatnonzero(seconds >= BUCKET_STARTS[bucket])
+    pools = [eligible[gender[eligible] == g] for g in np.unique(gender[eligible])]
+
+    def valid(i: NDArray, j: NDArray) -> NDArray[np.bool_]:
+        return (speaker[i] != speaker[j]) & _in_bucket(np.minimum(seconds[i], seconds[j]), bucket)
+
+    if count_nontarget_pairs(utterances, bucket) <= n:
+        rows, cols = [], []
+        for pool in pools:
+            r, c = np.triu_indices(len(pool), 1)  # every pair of the pool once, r < c
+            rows.append(pool[r])
+            cols.append(pool[c])
+        i, j = np.concatenate(rows), np.concatenate(cols)
+        keep = valid(i, j)
+        return i[keep], j[keep]
+
+    # Enrol uniform over all clips, test uniform over the enrol's gender, as in
+    # nontarget_trials; invalid and repeated pairs are drawn again.
+    rng = np.random.default_rng(seed)
+    keys = np.empty(0, np.int64)
+    for _ in range(100):
+        if len(keys) >= n:
+            break
+        m = 2 * (n - len(keys))
+        e = rng.choice(eligible, m)
+        f = np.empty(m, np.int64)
+        for pool in pools:
+            same = gender[e] == gender[pool[0]]
+            f[same] = rng.choice(pool, same.sum())
+        keep = valid(e, f)
+        i, j = np.minimum(e, f)[keep], np.maximum(e, f)[keep]
+        keys = np.concatenate([keys, i * len(utterances) + j])
+        keys = keys[np.sort(np.unique(keys, return_index=True)[1])]  # first draw of each pair
+    if len(keys) < n:
+        raise ValueError(f"Found only {len(keys)} distinct non-target pairs, need {n}")
+    keys = keys[:n]
+    return keys // len(utterances), keys % len(utterances)
 
 
 def write_trials(path: str | Path, rows: Iterable[tuple[str, Trial]]) -> int:
