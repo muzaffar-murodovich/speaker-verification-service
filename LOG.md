@@ -704,3 +704,72 @@ worthless on 8 kHz": thresholds must be per condition (D9).
 **Next.** M2: AS-Norm per condition (cohort degraded the same way, on the home PC for
 the same library versions), its gain on 8 kHz, then the D9 per-condition operating-point
 table.
+
+## 2026-10-26 — AS-Norm per condition, with the cohort degraded the same way
+
+M2 asks for EER with and without AS-Norm per condition, with the gain on degraded
+8 kHz audio. SVS guide §4.3: the cohort should match the audio it normalises, so each
+condition gets its own cohort: the 5,000 committed members of `voxceleb2-dev-v1`,
+degraded like the trials (`svs.cohort_condition`, commit 8746349, `make
+degraded-cohorts`). It ran on the home PC (same bcg729 1.1.1 and ffmpeg 6.1.1 as the
+trial embeddings): 55 min, opus 1,296 s, the others 300-451 s each.
+
+**Members left out** (under 3.0 s of speech after degradation; not replaced, so the
+cohort stays the committed list): pcm8k 3, g711a 8, g711u 3, g729 2, opus 4, noise15
+28, noise5 67 of 5,000.
+
+**EER %, raw cosine → AS-Norm** (`make eer-conditions-asnorm`, 19 s; table
+artifacts/damage/voxceleb1-asnorm.tsv, sha256 012ec36c; relative change in brackets):
+
+| condition | 3-10 s | 10-30 s | 30-120 s | > 120 s |
+| --- | --- | --- | --- | --- |
+| pcm16k | 1.560 → 1.448 (−7 %) | 0.602 → 0.582 (−3 %) | 0.642 → 0.559 (−13 %) | 0.355 → 0.322 (−9 %) |
+| pcm8k | 3.345 → 2.941 (−12 %) | 1.418 → 1.350 (−5 %) | 1.418 → 1.249 (−12 %) | 0.709 → 0.806 (+14 %) |
+| g711a | 3.467 → 3.039 (−12 %) | 1.472 → 1.408 (−4 %) | 1.450 → 1.285 (−11 %) | 0.735 → 0.838 (+14 %) |
+| g711u | 3.444 → 3.037 (−12 %) | 1.466 → 1.392 (−5 %) | 1.457 → 1.269 (−13 %) | 0.710 → 0.838 (+18 %) |
+| g729 | 6.393 → 5.299 (−17 %) | 2.962 → 2.488 (−16 %) | 2.693 → 2.248 (−17 %) | 1.289 → 1.325 (+3 %) |
+| opus | 2.058 → 1.777 (−14 %) | 0.774 → 0.702 (−9 %) | 0.818 → 0.687 (−16 %) | 0.427 → 0.355 (−17 %) |
+| noise15 | 2.007 → 1.847 (−8 %) | 0.770 → 0.732 (−5 %) | 0.727 → 0.648 (−11 %) | 0.419 → 0.387 (−8 %) |
+| noise5 | 3.296 → 3.025 (−8 %) | 1.307 → 1.191 (−9 %) | 0.873 → 0.776 (−11 %) | 0.516 → 0.481 (−7 %) |
+
+- On 8 kHz telephony the gain in the three buckets up to 120 s is 4-17 %, larger than on
+  clean audio (3-13 %), and largest under G.729 (16-17 % in every one of them).
+- \> 120 s on 8 kHz gets worse, but by 3-4 missed targets of 3,102 (pcm8k 22 → 25,
+  g711u 22 → 26, g729 40 → 41 at the EER point): inside the noise of this bucket (open
+  item 3). The four narrowband rows share the same trials, so they are not four
+  independent signs. A possible cause, not tested: the cohort is short clips (median
+  5.3 s), the > 120 s audio is not.
+
+**The clean threshold under AS-Norm** (FAR / FRR at the clean AS-Norm EER threshold):
+
+| condition | 3-10 s FAR | FRR | 10-30 s FAR | FRR | > 120 s FAR | FRR |
+| --- | --- | --- | --- | --- | --- | --- |
+| pcm16k | 1.448 | 1.448 | 0.582 | 0.582 | 0.322 | 0.322 |
+| pcm8k | 1.359 | 5.184 | 0.502 | 2.452 | 0.238 | 1.580 |
+| g729 | 1.299 | 13.590 | 0.499 | 6.864 | 0.266 | 3.804 |
+| noise5 | 1.328 | 5.144 | 0.592 | 1.849 | 0.411 | 0.613 |
+
+With the matched cohort, the impostor scores of 8 kHz audio land where clean ones do:
+under G.729 the FAR of the clean threshold falls from 19.94 % (raw cosine) to 1.30 % in
+3-10 s. The targets do not follow; their FRR at that threshold rises to 13.59 %. So
+AS-Norm fixes the false accepts that made the raw clean threshold dangerous, but the
+clean threshold is still wrong on 8 kHz, now in the other direction: thresholds stay per
+condition (D9).
+
+**Choice where the handbook and the SVS guide are silent** (the mentor may disagree):
+
+18. A cohort member with under 3.0 s of speech after degradation is left out of that
+    condition's cohort, not replaced by a spare: the service never scores such audio,
+    and the member list stays the committed version.
+
+Score files (sha256): pcm8k e5745ba1, g711a e5a77c6c, g711u 52a9263c, g729 ff4d83ce,
+opus 733b2158, noise15 d9820a45, noise5 2bb6a4d7. Cohorts: pcm8k 689a64eb, g711a
+47454ddf, g711u d26e9ecb, g729 98e394a1, opus e19f1c60, noise15 8f0ac71f, noise5
+133f81ba.
+
+**Open items for the mentor**
+
+13. Choice 18 above; and whether > 120 s needs a cohort of long audio.
+
+**Next.** D9 per condition: operating points (STRONG/PROBABLE from FRR at fixed FAR) for
+every condition on AS-Norm scores, precision and recall, WEAK floor, band function.
