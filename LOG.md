@@ -615,7 +615,7 @@ were made on the Mac for comparison:
   and 48 of 68 clips of the two speakers, lowest cosine 0.91.
 
 The published degraded results are therefore tied to the home PC: bcg729 1.1.1, ffmpeg
-6.1.1 (libopus from Ubuntu 24.04), x86. A clean clone on another machine will give
+6.1.1 with libopus 1.4 (Ubuntu 24.04; the Mac has libopus 1.6.1), x86. A clean clone on another machine will give
 slightly different scores for g729 and opus (open item 12). pcm8k, g711a/u and noise
 use only numpy/scipy/libsndfile and differ only by float rounding.
 
