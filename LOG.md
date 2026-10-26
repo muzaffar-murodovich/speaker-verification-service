@@ -641,3 +641,66 @@ Noise makes the VAD lose speech, as the one-speaker smoke run of 2026-10-21 show
     with the results, or pin them (e.g. build bcg729 1.1.1 from source in `make g729`)?
 
 **Next.** D7: EER per condition and bucket, with and without AS-Norm.
+
+## 2026-10-26 — D7: EER per condition, and the clean threshold on degraded audio
+
+Handbook D7: EER per codec, per sample rate, per duration bucket. `make eer-conditions`
+(`svs.damage`, commit a6f0962, 19 s) reads the clean and the seven degraded score files
+of the same trial list (sha256 7eb0eefa) and prints, per condition and bucket (and per
+bucket × gender): EER, its threshold, trial counts, trials refused, and the FRR and FAR
+that the **clean** EER threshold of that bucket gives under the condition. Raw cosine
+only; AS-Norm per condition needs a degraded cohort (next).
+
+**EER %, raw cosine** (each condition on the trials it scored; counts and refusals in
+artifacts/damage/voxceleb1-cosine.tsv, sha256 2b893027):
+
+| condition | 3-10 s | 10-30 s | 30-120 s | > 120 s |
+| --- | --- | --- | --- | --- |
+| pcm16k (clean) | 1.560 | 0.602 | 0.642 | 0.355 |
+| pcm8k | 3.345 | 1.418 | 1.418 | 0.709 |
+| g711a | 3.467 | 1.472 | 1.450 | 0.735 |
+| g711u | 3.444 | 1.466 | 1.457 | 0.710 |
+| g729 | 6.393 | 2.962 | 2.693 | 1.289 |
+| opus (16 kHz) | 2.058 | 0.774 | 0.818 | 0.427 |
+| noise15 | 2.007 | 0.770 | 0.727 | 0.419 |
+| noise5 | 3.296 | 1.307 | 0.873 | 0.516 |
+
+- Sample rate: 8 kHz alone doubles the EER in every bucket (1.560 → 3.345 in 3-10 s).
+- G.711 adds little on top of 8 kHz (≤ 0.13 points). G.729 doubles it again: 3.6-4.9×
+  clean, depending on the bucket.
+- Opus at 16 kbit/s keeps 16 kHz and costs 0.07-0.50 points.
+- noise5 hurts short audio most (3-10 s 2.1×, > 120 s 1.5×), and the VAD loses speech:
+  6,234 trials refused, 6,174 of them in 3-10 s.
+
+**The clean threshold on degraded audio** (FAR / FRR at the clean EER threshold of the
+bucket; on clean both are the EER):
+
+| condition | 3-10 s FAR | FRR | 10-30 s FAR | FRR | > 120 s FAR | FRR |
+| --- | --- | --- | --- | --- | --- | --- |
+| pcm16k | 1.560 | 1.560 | 0.603 | 0.602 | 0.355 | 0.355 |
+| pcm8k | 6.130 | 1.903 | 3.711 | 0.706 | 2.735 | 0.290 |
+| g711a | 6.338 | 1.917 | 3.850 | 0.712 | 2.857 | 0.290 |
+| g729 | 19.942 | 1.805 | 15.785 | 0.512 | 14.105 | 0.032 |
+| noise5 | 1.315 | 6.068 | 0.592 | 2.109 | 0.511 | 0.516 |
+
+Narrowband audio moves *all* cosines up, impostors included: the EER threshold grows
+from 0.348 (clean) to 0.391 (pcm8k) and 0.446 (G.729) in 3-10 s. A threshold fitted on
+clean 16 kHz therefore accepts 4-40× more impostors on 8 kHz telephony (G.729 > 120 s:
+0.355 % → 14.1 %), while FRR barely moves (and falls under G.729), so nothing in the
+missed targets warns of it. Noise moves the cosines down and turns the same threshold
+into missed targets. This is the table for the handbook's "why a clean threshold is
+worthless on 8 kHz": thresholds must be per condition (D9).
+
+**Gender.** Female EER is higher than male in all four buckets under pcm8k and G.729
+(e.g. G.729 > 120 s: 2.315 % vs 0.796 %); on clean it was higher in 3 of 4.
+
+**Choice where the handbook and the SVS guide are silent** (the mentor may disagree):
+
+17. Each condition's EER uses the trials it scored, as the service would. On the
+    542,410 trials that no condition refused (`make eer-conditions COMMON=1`, sha256
+    c79fb2a2) every EER moves by at most 0.05 points (largest: pcm8k 3-10 s 3.345 →
+    3.296), so the refusals do not change the comparison.
+
+**Next.** M2: AS-Norm per condition (cohort degraded the same way, on the home PC for
+the same library versions), its gain on 8 kHz, then the D9 per-condition operating-point
+table.
