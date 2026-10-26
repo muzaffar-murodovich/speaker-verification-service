@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm eer-conditions operating-points det test lint format eval clean
+.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm eer-conditions degraded-cohorts degraded-asnorm-scores eer-conditions-asnorm operating-points det test lint format eval clean
 
 help: ## Show available targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -167,6 +167,24 @@ asnorm-scores: $(COHORT).npz ## AS-Norm score of every clean trial against the c
 
 eer-asnorm: ## EER per duration bucket from the AS-Norm score file
 	uv run python -m svs.metrics $(ASNORM_SCORES)
+
+# M2: AS-Norm per condition. The committed cohort members, degraded like the trials
+# (SVS guide §4.3: the cohort matches the audio it normalises).
+COND_COHORTS := $(DEGRADED:%=$(COHORT)-%.npz)
+COND_ASNORM := $(DEGRADED:%=artifacts/scores/voxceleb1-%-asnorm.tsv)
+
+$(COHORT)-%.npz: | $(MODEL) $(G729) $(MUSAN_DIR)/.unpacked
+	uv run python -m svs.cohort_condition cohorts/$(notdir $(COHORT)).tsv $(VOX2_DIR)/wav $* $@
+
+degraded-cohorts: $(COND_COHORTS) ## Embed the cohort under every degraded condition
+
+artifacts/scores/voxceleb1-%-asnorm.tsv: $(COND_DIR)/%/clips/.done $(COND_DIR)/%/videos/.done $(COHORT)-%.npz
+	uv run python -m svs.score $(TRIALS) $(COND_DIR)/$*/clips $(COND_DIR)/$*/videos $@ --condition $* --cohort $(COHORT)-$*.npz
+
+degraded-asnorm-scores: $(COND_ASNORM) ## AS-Norm score of the trials under every degraded condition
+
+eer-conditions-asnorm: ## As eer-conditions, on AS-Norm scores with each condition's cohort
+	uv run python -m svs.damage pcm16k=$(ASNORM_SCORES) $(join $(DEGRADED:%=%=),$(COND_ASNORM)) $(if $(COMMON),--common)
 
 OPERATING_POINTS := artifacts/calibration/voxceleb1-pcm16k.tsv
 
