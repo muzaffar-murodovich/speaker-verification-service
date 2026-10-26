@@ -91,6 +91,19 @@ def test_stop_while_writing_leaves_no_file_that_a_rerun_would_skip(tmp_path, mon
     assert not (tmp_path / "out" / "id1.npz").exists()
 
 
+def test_data_reaches_the_disk_before_the_file_gets_its_final_name(tmp_path, monkeypatch):
+    synced_before_rename = []
+
+    def fake_fsync(fd):
+        synced_before_rename.append(not (tmp_path / "out" / "id1.npz").exists())
+
+    wav, meta = make_tree(tmp_path, {"id1/v1/00001": "speech"})
+    monkeypatch.setattr(embed_cache.os, "fsync", fake_fsync)
+    embed_all(FakeEmbedder(), wav, meta, tmp_path / "out")
+    assert synced_before_rename == [True]
+    assert (tmp_path / "out" / "id1.npz").exists()
+
+
 def test_read_cache_joins_all_speaker_files_in_order(tmp_path):
     wav, meta = make_tree(
         tmp_path, {"id2/v1/00001": "speech", "id1/v1/00001": "speech", "id1/v1/00002": "silence"}

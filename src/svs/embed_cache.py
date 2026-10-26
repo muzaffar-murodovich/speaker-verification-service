@@ -1,6 +1,7 @@
 """Embed every VoxCeleb1 clip (or video) once and cache the result, one .npz per speaker."""
 
 import argparse
+import os
 import time
 from itertools import groupby
 from pathlib import Path
@@ -82,6 +83,8 @@ def embed_all(
         ]
         # Write under a name read_cache ignores, then rename: a stop mid-write (a run
         # killed on a time limit) leaves only a .part file, never a broken id*.npz.
+        # fsync before the rename: without it a power cut on the home PC kept the new
+        # name but not the data, and left five empty id*.npz files (2026-10-22, -23).
         part = path.with_suffix(".npz.part")
         with open(part, "wb") as f:
             np.savez(
@@ -90,6 +93,8 @@ def embed_all(
                 net_seconds=np.array([seconds for seconds, _ in results]),
                 embeddings=np.stack([embedding for _, embedding in results]),
             )
+            f.flush()
+            os.fsync(f.fileno())
         part.replace(path)
         written += 1
         print(f"{speaker}: {len(units)} {'videos' if join_videos else 'clips'}", flush=True)
