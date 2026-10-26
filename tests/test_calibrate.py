@@ -4,7 +4,14 @@ import numpy as np
 import pytest
 
 from svs.asnorm import as_norm
-from svs.calibrate import POOL_SIZE, PROBABLE_FAR, STRONG_FAR, pair_scores, threshold_at_far
+from svs.calibrate import (
+    POOL_SIZE,
+    PROBABLE_FAR,
+    STRONG_FAR,
+    pair_scores,
+    precision,
+    threshold_at_far,
+)
 
 NONTARGET = np.arange(1, 11) / 10  # 0.1, 0.2, ..., 1.0
 TARGET = np.array([0.85, 0.95])
@@ -36,3 +43,10 @@ def test_pair_scores_in_batches_equal_one_pass():
     i, j = np.array([0, 1, 2, 3, 0, 4, 1]), np.array([5, 4, 3, 5, 2, 5, 3])
     whole = as_norm(np.sum(x[i] * x[j], axis=1), mu[i], sd[i], mu[j], sd[j])
     np.testing.assert_allclose(pair_scores(x, mu, sd, i, j, batch=3), whole)
+
+
+def test_precision_counts_false_accepts_over_the_whole_pool():
+    # Pool of 1,000 with FAR 1e-3: 0.8 expected true accepts against 1.0 false.
+    assert precision(0.8, 1e-3, pool=1_000) == pytest.approx(0.8 / 1.8)
+    # The STRONG rule leaves 0.1 false accepts per query, so precision stays below 1 / 1.1.
+    assert precision(1.0, STRONG_FAR) == pytest.approx(1 / 1.1)

@@ -42,6 +42,15 @@ def threshold_at_far(target: NDArray, nontarget: NDArray, far: float) -> tuple[f
     return float(thresholds[i]), round(false_alarm[i] * len(nontarget)), float(miss[i])
 
 
+def precision(recall: float, far: float, pool: int = POOL_SIZE) -> float:
+    """Share of accepts that are right, for one query against a pool holding its speaker.
+
+    The true profile passes with probability recall; each of the other pool members with
+    probability far. If the speaker may be missing from the pool, precision is lower.
+    """
+    return recall / (recall + pool * far)
+
+
 def pair_scores(
     embeddings: NDArray, mu: NDArray, sd: NDArray, i: NDArray, j: NDArray, batch: int = BATCH
 ) -> NDArray[np.float64]:
@@ -85,6 +94,7 @@ if __name__ == "__main__":
                 accepted = nontarget >= threshold
                 sides = speakers[i[accepted]], speakers[j[accepted]]
                 pairs = {tuple(sorted(p)) for p in zip(*sides, strict=True)}
+                measured_far = false_accepts / len(nontarget)
                 rows.append(
                     {
                         "condition": args.condition,
@@ -97,6 +107,8 @@ if __name__ == "__main__":
                         "n_nontarget": len(nontarget),
                         "frr_%": f"{100 * frr:.2f}",
                         "n_target": len(targets[bucket]),
+                        "recall": f"{1 - frr:.4f}",
+                        f"precision_pool{POOL_SIZE}": f"{precision(1 - frr, measured_far):.3f}",
                     }
                 )
                 print("\t".join(map(str, rows[-1].values())))
