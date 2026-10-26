@@ -990,3 +990,49 @@ all accepts above the floor):
 
 **Next:** band function (score + condition + bucket → band) with a test; the
 per-condition table with EER joined to the operating points.
+
+## 2026-10-26 — D9 done: operating-point table, band function, DET per condition
+
+**The operating-point table** (handbook M2; commit 994e5ee, `make operating-points-table`,
+8 s): docs/operating-points.tsv (sha256 0b077bd0), committed. 96 rows = 8 conditions × 4
+buckets × 3 bands. Each row: model (`voxceleb_ECAPA512_LM@a2f3dcb1`), cohort
+(`voxceleb2-dev-v1`, or `-<condition>`), threshold, FAR, false accepts and their speaker
+pairs, non-target and target counts, recall, precision (pool 50,000, choice 20), band
+precision, and the condition's AS-Norm EER with its trial counts. The EERs equal the
+2026-10-26 AS-Norm table. A new model or cohort means a new table (SVS guide §8.4 step 6).
+
+**Band precision** is the precision of the scores inside one band only (above its
+threshold, below the next). At pool 50,000 it is 0.019-0.190 in PROBABLE and
+0.009-0.063 in WEAK: almost every score inside these two bands is an impostor. Clean
+3-10 s: STRONG 0.870, PROBABLE 0.096, WEAK 0.033. This is open item 15 again, now per
+band: the guide's 0.85-0.95 (PROBABLE) and 0.4-0.7 (WEAK) need far smaller pools.
+
+**The band function** (commit fff1dae, `svs.bands`): score, speech seconds and condition
+→ band and the table row that decided it (M2: every band traceable to a row). A score
+on a threshold is in that band; NO_MATCH returns the WEAK row it fell below. Under 3.0 s
+of speech it raises (the service refuses to score); an unknown condition raises;
+reading a table whose thresholds do not fall from STRONG to WEAK raises. A test checks
+that the committed table covers all 8 × 4 condition-buckets. Examples on the real table,
+score 6.5: clean 60 s → WEAK, clean 5 s → PROBABLE, G.729 5 s → STRONG.
+
+**Our thresholds rise with duration; the guide's fall.** Clean STRONG: 3-10 s 6.69,
+30-120 s 7.65; guide reference 1.34 and 0.94 (§4.4). So here the same score is a higher
+band on short audio, the reverse of the guide's example. Not explained. One candidate,
+not tested: AS-Norm divides by the cohort spread, and long audio against a cohort of
+short clips may give larger z-scores for impostors too (see open item 13).
+
+**DET per condition** (commit 839883f, `make det-conditions`, 9 s): one plot per bucket,
+one line per condition, AS-Norm scores; docs/figures/voxceleb1-det-conditions-d9.png
+(sha256 8c81cc7e). The four 8 kHz lines (pcm8k, G.711 A/µ, and G.729 above them) lie
+above the wideband ones at nearly every FAR, not only at the EER (in 10-30 s, noise
+5 dB reaches them below FAR 0.005 %); opus and noise 15 dB lie close
+to clean. The curves use the trial list's 100,000 non-targets, so they stop at FAR 1e-5;
+the STRONG point (2e-6) is only in the table.
+
+**Handbook D9 status:** calibrate per condition, DET per condition, thresholds from FRR
+at a fixed FAR (choice 15), four bands — done. M2 left: minDCF with prior and costs
+(D10); the 3.0 s refusal as a service test comes with the API.
+
+**Open items for the mentor**
+
+17. Thresholds rise with duration here and fall in the guide's reference (above).
