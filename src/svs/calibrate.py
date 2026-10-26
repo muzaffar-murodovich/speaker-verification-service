@@ -1,6 +1,7 @@
-"""Operating points: the STRONG and PROBABLE thresholds of each bucket, from FRR at a fixed FAR.
+"""Operating points: the STRONG, PROBABLE and WEAK thresholds of each bucket, at a fixed FAR.
 
-SVS guide §8.4: STRONG at the FAR where N_expected x FAR <= 0.1, PROBABLE at 10 x that FAR.
+SVS guide §8.4: STRONG at the FAR where N_expected x FAR <= 0.1, PROBABLE at 10 x that FAR,
+WEAK (the floor) for a review workload people will do.
 """
 
 import argparse
@@ -20,7 +21,9 @@ from svs.voxceleb import read_genders, utterances
 POOL_SIZE = 50_000  # CFG_SV_MAX_AUTO_POOL: the largest pool the service assigns from (§4.6).
 STRONG_FAR = 0.1 / POOL_SIZE  # 2e-6
 PROBABLE_FAR = 10 * STRONG_FAR  # 2e-5
-BANDS = {"PROBABLE": PROBABLE_FAR, "STRONG": STRONG_FAR}
+# The floor adds one impostor candidate per query for a person to review (LOG choice 21).
+WEAK_FAR = PROBABLE_FAR + 1 / POOL_SIZE  # 4e-5
+BANDS = {"WEAK": WEAK_FAR, "PROBABLE": PROBABLE_FAR, "STRONG": STRONG_FAR}
 # Per bucket: about 10 false accepts at STRONG_FAR, so the threshold rests on more than one trial.
 N_NONTARGET = 5_000_000
 # Pairs scored at once: two 250,000 x 192 float64 gathers are 0.8 GB (the home PC has 7 GB).

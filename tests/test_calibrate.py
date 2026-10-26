@@ -8,6 +8,7 @@ from svs.calibrate import (
     POOL_SIZE,
     PROBABLE_FAR,
     STRONG_FAR,
+    WEAK_FAR,
     pair_scores,
     precision,
     threshold_at_far,
@@ -21,6 +22,8 @@ def test_strong_far_follows_the_pool_size_rule():
     # SVS guide §8.4: N_expected x FAR <= 0.1 for STRONG, PROBABLE at 10 x that FAR.
     assert POOL_SIZE * STRONG_FAR == pytest.approx(0.1)
     assert PROBABLE_FAR == pytest.approx(10 * STRONG_FAR)
+    # WEAK adds one impostor candidate per query to PROBABLE's.
+    assert POOL_SIZE * (WEAK_FAR - PROBABLE_FAR) == pytest.approx(1)
 
 
 def test_threshold_at_far_allows_at_most_far_false_accepts():
