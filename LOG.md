@@ -928,3 +928,65 @@ Trial counts per row: the n_target and n_nontarget columns of the tables (above,
     guide's typical precisions meant for filtered pools?
 
 **Next:** WEAK floor, band function (score + condition → band) with a test.
+
+## 2026-10-26 — D9: the WEAK floor
+
+SVS guide §8.4: `WEAK` → the floor, chosen for a review workload people will actually
+do. A WEAK candidate gets no automatic action; it is shown to a person (§4.5). The
+guide gives no number for the workload.
+
+**The ladder** (clean 3-10 s, the same 5,000,000 fresh non-targets; impostor
+candidates per query = 50,000 × measured FAR):
+
+| FAR | threshold | recall | impostor candidates per query |
+| --- | --- | --- | --- |
+| 2e-6 (STRONG) | 6.6948 | 0.6670 | 0.10 |
+| 2e-5 (PROBABLE) | 6.0756 | 0.7610 | 0.99 |
+| 4e-5 | 5.7978 | 0.7956 | 1.99 |
+| 1e-4 | 5.4092 | 0.8384 | 5.00 |
+| 2e-4 | 5.0321 | 0.8727 | 10.00 |
+| 1e-3 | 4.0753 | 0.9344 | 49.99 |
+
+A floor at FAR 1e-3 would show the true speaker 93 % of the time, next to about 50
+impostors per query; at about 20 minutes per false match (§4.4) nobody reviews that.
+
+**The floor** (commit 0fc5168): `WEAK_FAR = PROBABLE_FAR + 1 / POOL_SIZE` = 4e-5, so
+the WEAK band adds one impostor candidate per query. Tables recomputed (`make
+operating-points operating-points-conditions`, 3 min 55 s); without the WEAK rows each
+file has the same SHA-256 as before (STRONG and PROBABLE unchanged). New tables
+(sha256): pcm16k d80ad401, pcm8k 90e4aa8e, g711a 97232196, g711u 85d3d716, g729
+de07ffc5, opus 8bbd71da, noise15 8cbe2e69, noise5 be1facd1.
+
+**Recall / precision at the WEAK floor** (precision for a pool of 50,000, choice 20;
+all accepts above the floor):
+
+| condition | 3-10 s | 10-30 s | 30-120 s | > 120 s |
+| --- | --- | --- | --- | --- |
+| pcm16k | 0.7956 / 0.286 | 0.9276 / 0.318 | 0.9488 / 0.323 | 0.9681 / 0.330 |
+| pcm8k | 0.5670 / 0.222 | 0.7793 / 0.281 | 0.8251 / 0.293 | 0.8672 / 0.304 |
+| g711a | 0.5384 / 0.213 | 0.7657 / 0.278 | 0.8236 / 0.293 | 0.8617 / 0.301 |
+| g711u | 0.5570 / 0.219 | 0.7673 / 0.278 | 0.8246 / 0.293 | 0.8620 / 0.305 |
+| g729 | 0.3519 / 0.150 | 0.6105 / 0.235 | 0.6746 / 0.253 | 0.7721 / 0.282 |
+| opus | 0.7328 / 0.269 | 0.9062 / 0.313 | 0.9385 / 0.320 | 0.9545 / 0.325 |
+| noise15 | 0.7165 / 0.265 | 0.8948 / 0.310 | 0.9430 / 0.322 | 0.9607 / 0.329 |
+| noise5 | 0.5824 / 0.226 | 0.8104 / 0.289 | 0.9253 / 0.317 | 0.9536 / 0.324 |
+
+- Each floor rests on 47-51 false accepts in > 120 s and 199 in the other buckets, so
+  it is far better measured than STRONG.
+- About two impostors and at most one true speaker pass the floor per query, so the
+  precision above it stays under 1/3; the guide's 0.4-0.7 for WEAK needs a smaller pool
+  (open item 15).
+
+**Choice where the handbook and the SVS guide are silent** (the mentor may disagree):
+
+21. WEAK floor at FAR = PROBABLE FAR + 1 / 50,000 = 4e-5: one impostor candidate per
+    query on top of PROBABLE's, for a pool of 50,000. All three bands are then set in
+    one unit, impostors per query: STRONG 0.1, PROBABLE 1, WEAK 2.
+
+**Open items for the mentor**
+
+16. Choice 21 above: is one extra impostor per query the review workload the analysts
+    will accept?
+
+**Next:** band function (score + condition + bucket → band) with a test; the
+per-condition table with EER joined to the operating points.
