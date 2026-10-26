@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm operating-points det test lint format eval clean
+.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm eer-conditions operating-points det test lint format eval clean
 
 help: ## Show available targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -154,6 +154,11 @@ degraded-scores: $(COND_SCORES) ## Score the clean trial list under every degrad
 
 eer: ## EER per duration bucket from the score file
 	uv run python -m svs.metrics $(SCORES)
+
+# D7: the same trials under each condition; the clean thresholds are the reference.
+# COMMON=1 scores every condition on the trials that no condition refused.
+eer-conditions: ## EER per condition and bucket, and the clean threshold under each condition
+	uv run python -m svs.damage pcm16k=$(SCORES) $(join $(DEGRADED:%=%=),$(COND_SCORES)) $(if $(COMMON),--common)
 
 ASNORM_SCORES := artifacts/scores/voxceleb1-asnorm.tsv
 
