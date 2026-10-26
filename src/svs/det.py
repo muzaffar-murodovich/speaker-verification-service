@@ -1,4 +1,4 @@
-"""DET plot: miss rate against false-alarm rate at every threshold, one line per bucket."""
+"""DET plot: miss rate against false-alarm rate at every threshold, per bucket or condition."""
 
 import argparse
 from pathlib import Path
@@ -8,6 +8,7 @@ from numpy.typing import NDArray
 from scipy.stats import norm
 
 from svs.metrics import eer, error_rates, read_bucket_scores
+from svs.trials import BUCKETS
 
 # Axis ticks as rates. 0.001 % is one false alarm in 100,000 non-target trials.
 TICKS = [0.00001, 0.0001, 0.001, 0.01, 0.02, 0.05, 0.1, 0.2, 0.4]
@@ -24,10 +25,10 @@ def det_points(target: NDArray, nontarget: NDArray) -> tuple[NDArray, NDArray]:
     return norm.ppf(false_alarm[keep]), norm.ppf(miss[keep])
 
 
-def plot_det(curves: dict[str, tuple[NDArray, NDArray]], path: str | Path) -> None:
+def draw_det(
+    ax, curves: dict[str, tuple[NDArray, NDArray]], legend_title: str, fontsize: int = 8
+) -> None:
     """One DET line per (target, non-target) pair; the legend gives EER and trial counts."""
-    fig = Figure(figsize=(6, 6))  # Not pyplot: no window and no global state.
-    ax = fig.subplots()
     for label, (target, nontarget) in curves.items():
         x, y = det_points(target, nontarget)
         rate, _ = eer(target, nontarget)
@@ -43,17 +44,39 @@ def plot_det(curves: dict[str, tuple[NDArray, NDArray]], path: str | Path) -> No
     ax.set_xlabel("False-alarm rate (%)")
     ax.set_ylabel("Miss rate (%)")
     ax.grid(True, linewidth=0.3)
-    ax.legend(
-        title="bucket: EER (target / non-target)", loc="upper right", fontsize=8, title_fontsize=8
-    )
+    ax.legend(title=legend_title, loc="upper right", fontsize=fontsize, title_fontsize=fontsize)
+
+
+def save(fig: Figure, path: str | Path) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=150, bbox_inches="tight")
 
 
+def plot_det(curves: dict[str, tuple[NDArray, NDArray]], path: str | Path) -> None:
+    """One plot, one line per bucket."""
+    fig = Figure(figsize=(6, 6))  # Not pyplot: no window and no global state.
+    draw_det(fig.subplots(), curves, "bucket: EER (target / non-target)")
+    save(fig, path)
+
+
+def plot_det_conditions(files: dict[str, str], path: str | Path) -> None:
+    """One plot per bucket, one line per condition (handbook D9: DET per condition)."""
+    scores = {condition: read_bucket_scores(f) for condition, f in files.items()}
+    fig = Figure(figsize=(12, 12))
+    for ax, bucket in zip(fig.subplots(2, 2).flat, BUCKETS, strict=True):
+        curves = {c: s[bucket] for c, s in scores.items()}
+        draw_det(ax, curves, "condition: EER (target / non-target)", fontsize=7)
+        ax.set_title(bucket)
+    save(fig, path)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("scores_tsv")
+    parser.add_argument("scores", nargs="+", help="one score file, or CONDITION=SCORES_TSV pairs")
     parser.add_argument("out_png")
     args = parser.parse_args()
-    plot_det(read_bucket_scores(args.scores_tsv), args.out_png)
+    if any("=" in item for item in args.scores):
+        plot_det_conditions(dict(item.split("=", 1) for item in args.scores), args.out_png)
+    else:
+        plot_det(read_bucket_scores(*args.scores), args.out_png)
     print(f"Wrote {args.out_png}")

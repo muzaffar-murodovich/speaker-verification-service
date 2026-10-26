@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm eer-conditions degraded-cohorts degraded-asnorm-scores eer-conditions-asnorm operating-points operating-points-conditions operating-points-table det test lint format eval clean
+.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm eer-conditions degraded-cohorts degraded-asnorm-scores eer-conditions-asnorm operating-points operating-points-conditions operating-points-table det det-conditions test lint format eval clean
 
 help: ## Show available targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -214,6 +214,11 @@ DET := artifacts/plots/voxceleb1-det.png
 
 det: ## DET plot, one line per duration bucket
 	uv run python -m svs.det $(SCORES) $(DET)
+
+DET_CONDITIONS := artifacts/plots/voxceleb1-det-conditions.png
+
+det-conditions: ## DET per condition on AS-Norm scores, one plot per bucket
+	uv run python -m svs.det pcm16k=$(ASNORM_SCORES) $(join $(DEGRADED:%=%=),$(COND_ASNORM)) $(DET_CONDITIONS)
 
 test: $(G729) ## Run the test suite
 	uv run pytest
