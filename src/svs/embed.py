@@ -9,6 +9,8 @@ from numpy.typing import NDArray
 from svs.extract import SAMPLE_RATE
 
 MODEL_PATH = Path("artifacts/models/voxceleb_ECAPA512_LM.onnx")
+# The file name and the Hugging Face revision it came from (Makefile MODEL_REV).
+MODEL_VERSION = "voxceleb_ECAPA512_LM@a2f3dcb1"
 EMBEDDING_DIM = 192
 
 

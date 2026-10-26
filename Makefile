@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm eer-conditions degraded-cohorts degraded-asnorm-scores eer-conditions-asnorm operating-points operating-points-conditions det test lint format eval clean
+.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm eer-conditions degraded-cohorts degraded-asnorm-scores eer-conditions-asnorm operating-points operating-points-conditions operating-points-table det test lint format eval clean
 
 help: ## Show available targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -199,6 +199,16 @@ artifacts/calibration/voxceleb1-%.tsv: artifacts/scores/voxceleb1-%-asnorm.tsv
 	uv run python -m svs.calibrate $(COND_DIR)/$*/clips $(COND_DIR)/$*/videos $(META) $(COHORT)-$*.npz $< $@ --condition $*
 
 operating-points-conditions: $(COND_POINTS) ## As operating-points, for every degraded condition
+
+# M2: one table, condition x bucket x band, with EER, threshold, precision, recall and
+# trial counts. Committed: the band function reads it.
+OPTABLE := docs/operating-points.tsv
+comma := ,
+
+operating-points-table: ## Join EER and operating points of every condition into one table
+	uv run python -m svs.optable pcm16k=$(ASNORM_SCORES),$(OPERATING_POINTS) \
+		$(foreach c,$(DEGRADED),$(c)=artifacts/scores/voxceleb1-$(c)-asnorm.tsv$(comma)artifacts/calibration/voxceleb1-$(c).tsv) \
+		--out $(OPTABLE)
 
 DET := artifacts/plots/voxceleb1-det.png
 
