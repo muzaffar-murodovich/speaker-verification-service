@@ -773,3 +773,88 @@ opus 733b2158, noise15 d9820a45, noise5 2bb6a4d7. Cohorts: pcm8k 689a64eb, g711a
 
 **Next.** D9 per condition: operating points (STRONG/PROBABLE from FRR at fixed FAR) for
 every condition on AS-Norm scores, precision and recall, WEAK floor, band function.
+
+## 2026-10-26 — D9: operating points per condition
+
+Handbook D9: calibrate per condition. The clean operating points (2026-10-22 entry)
+now exist for the seven degraded conditions too, with the same FARs (STRONG 2e-6,
+PROBABLE 2e-5, choice 15) and the same fresh-non-target method (choice 16).
+
+**How** (commit 0e035aa, `make operating-points-conditions`, 203 s, 3.7 GB on the Mac):
+per condition, 5,000,000 fresh non-target pairs per bucket (seed 0) from that
+condition's embeddings, AS-Norm against that condition's cohort; FRR over the targets
+of that condition's AS-Norm score file. Only stored embeddings are read, no audio is
+degraded, so the Mac's codec versions play no part. pcm8k rerun: identical output.
+Tables artifacts/calibration/voxceleb1-<condition>.tsv (sha256 pcm8k 3299b628, g711a
+fbe3881d, g711u 696ef01f, g729 aa95f428, opus 954db6cb, noise15 cd1d0837, noise5
+7a6c2162; pcm16k unchanged 8906f8b4). experiments.csv d9-op-<condition>.
+
+**FRR % at STRONG** (FAR 2e-6):
+
+| condition | 3-10 s | 10-30 s | 30-120 s | > 120 s |
+| --- | --- | --- | --- | --- |
+| pcm16k | 33.30 | 17.38 | 13.36 | 8.09 |
+| pcm8k | 66.80 | 47.88 | 37.82 | 35.01 |
+| g711a | 69.29 | 47.91 | 42.23 | 35.94 |
+| g711u | 69.18 | 44.08 | 42.40 | 35.65 |
+| g729 | 84.77 | 62.67 | 54.58 | 42.75 |
+| opus | 48.77 | 24.84 | 14.45 | 10.96 |
+| noise15 | 48.93 | 24.15 | 15.41 | 6.48 |
+| noise5 | 63.54 | 35.98 | 17.69 | 9.45 |
+
+**FRR % at PROBABLE** (FAR 2e-5):
+
+| condition | 3-10 s | 10-30 s | 30-120 s | > 120 s |
+| --- | --- | --- | --- | --- |
+| pcm16k | 23.90 | 9.30 | 6.49 | 4.35 |
+| pcm8k | 48.52 | 26.94 | 22.23 | 16.38 |
+| g711a | 52.87 | 28.84 | 22.40 | 16.12 |
+| g711u | 50.07 | 29.12 | 21.55 | 16.22 |
+| g729 | 70.58 | 45.00 | 38.06 | 28.69 |
+| opus | 31.33 | 12.83 | 7.57 | 5.64 |
+| noise15 | 32.37 | 13.03 | 7.43 | 4.80 |
+| noise5 | 47.39 | 22.30 | 9.42 | 6.06 |
+
+**STRONG thresholds** (AS-Norm score):
+
+| condition | 3-10 s | 10-30 s | 30-120 s | > 120 s |
+| --- | --- | --- | --- | --- |
+| pcm16k | 6.6948 | 7.2218 | 7.6520 | 7.4228 |
+| pcm8k | 6.5339 | 6.9375 | 7.0810 | 7.4862 |
+| g711a | 6.5875 | 6.8809 | 7.2354 | 7.4999 |
+| g711u | 6.5892 | 6.7149 | 7.2539 | 7.4988 |
+| g729 | 6.1673 | 6.3029 | 6.6637 | 6.7689 |
+| opus | 6.9346 | 7.2511 | 7.2848 | 7.3242 |
+| noise15 | 7.0030 | 7.2565 | 7.6601 | 7.0959 |
+| noise5 | 7.0250 | 7.2148 | 7.5788 | 7.3628 |
+
+- On 8 kHz telephony STRONG misses two thirds or more of the true 3-10 s pairs (pcm8k
+  66.80 %, G.729 84.77 %), 2.0-2.5 times the clean rate. The 8 kHz thresholds are lower than the
+  clean ones, yet the FRR is higher: the targets fall further than the impostors.
+- Opus and noise at 15 dB stay close to clean from 30 s up; the damage is concentrated
+  in 8 kHz codecs and short audio.
+- Each condition has its own threshold per bucket (3-10 s: 6.17 under G.729 to 7.03
+  under noise 5 dB), so the service looks the threshold up by condition and bucket.
+- At STRONG 3-10 s to 30-120 s, the 10 false accepts come from 5-10 speaker pairs.
+  \> 120 s rests on 2 false accepts, and on 8 kHz both come from one speaker pair: these
+  four thresholds are not reliable (as on clean audio; VoxCeleb1 has no more long videos).
+
+**Durations move under degradation.** The non-target pairs are put into buckets by
+the speech seconds measured on the degraded audio; the targets keep the clean trial
+list's buckets (D6 choice 6). Clips and videos whose bucket differs from the clean one
+(including those that fall below 3.0 s): pcm8k 0.19 % of clips / 0.18 % of videos,
+g711a 0.73 / 0.62, g711u 0.44 / 0.34, g729 0.76 / 1.45, opus 0.42 / 0.50, noise15
+2.14 / 1.84, noise5 4.48 / 3.86 (median change −0.12 to +0.22 s).
+
+**Choice where the handbook and the SVS guide are silent** (the mentor may disagree):
+
+19. Calibration non-targets are bucketed by the speech duration of the degraded audio,
+    as the service will bucket a query it measures; the targets keep the clean
+    buckets. At most 4.5 % of clips (noise 5 dB) are in a different bucket.
+
+**Not done yet:** precision and recall per threshold, the WEAK floor, the band
+function, thresholds for smaller pools.
+
+**Open items for the mentor**
+
+14. Choice 19 above; and the > 120 s STRONG thresholds, which rest on 2 false accepts.
