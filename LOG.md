@@ -587,3 +587,56 @@ per-condition tables (needs the degraded embeddings), thresholds for smaller poo
 **Open items for the mentor**
 
 11. The choices 15-16 above.
+
+## 2026-10-26 — D6 done: degraded embeddings and per-condition scores
+
+The seven degraded conditions are embedded and scored. No GPU came (open item 8), so
+the run used the home PC's CPU on four nights, 2026-10-21 to 2026-10-25, through a
+local cron job that stopped at 08:55 and resumed the next evening. 17,514 speaker
+files (7 conditions × clips and videos × 1,251 speakers), 1.0 GB, copied to the Mac.
+
+**Two power cuts left five empty files.** The home PC lost power on 2026-10-22 (07:16)
+and 2026-10-23 (01:37). Files are written as `.npz.part` and renamed, but without an
+fsync the rename reached the disk and the data did not: g729 id10747-id10749 and opus
+id10841-id10842 were 0-byte `id*.npz` files, which the next night skipped as done.
+`make degraded-scores` found them (EOFError). Commit 6e01e43 adds the fsync before the
+rename, with a test that fails without it. The five speakers were recomputed on the
+home PC (32 s + 46 s), so every condition comes from one machine.
+
+**Degraded audio depends on library versions.** Before the recompute, the same speakers
+were made on the Mac for comparison:
+
+- bcg729 1.1.2 (Mac, Homebrew) vs 1.1.1 (home, Ubuntu 1.1.1-2build1, no code patches):
+  on id10746 (60 clips) the G.729 output differed in 32 clips, the VAD speech length in
+  8, lowest embedding cosine 0.932. With 1.1.1 built from source on the Mac: 2 clips,
+  1 clip, 0.984. The rest comes from `resample_poly` float rounding on ARM vs x86 (same
+  numpy 2.5.3 and scipy 1.18.1 on both).
+- ffmpeg 9.0.2 (Mac) vs 6.1.1 (home) for Opus: VAD speech length differed in 79 of 96
+  and 48 of 68 clips of the two speakers, lowest cosine 0.91.
+
+The published degraded results are therefore tied to the home PC: bcg729 1.1.1, ffmpeg
+6.1.1 (libopus from Ubuntu 24.04), x86. A clean clone on another machine will give
+slightly different scores for g729 and opus (open item 12). pcm8k, g711a/u and noise
+use only numpy/scipy/libsndfile and differ only by float rounding.
+
+**Trials refused** (degraded audio with under 3.0 s of speech, of 549,856; clean 0):
+
+| condition | refused | scored |
+| --- | --- | --- |
+| pcm8k | 207 | 549,649 |
+| g711u | 455 | 549,401 |
+| g711a | 751 | 549,105 |
+| g729 | 300 | 549,556 |
+| opus | 292 | 549,564 |
+| noise15 | 2,049 | 547,807 |
+| noise5 | 6,234 | 543,622 |
+
+Noise makes the VAD lose speech, as the one-speaker smoke run of 2026-10-21 showed.
+
+**Open items for the mentor**
+
+8. Closed: no GPU was needed; four nights on the home PC's CPU.
+12. Degraded results depend on bcg729 and ffmpeg versions (above). Record the versions
+    with the results, or pin them (e.g. build bcg729 1.1.1 from source in `make g729`)?
+
+**Next.** D7: EER per condition and bucket, with and without AS-Norm.
