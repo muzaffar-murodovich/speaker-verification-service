@@ -62,6 +62,7 @@ if __name__ == "__main__":
     parser.add_argument("cohort_npz")
     parser.add_argument("asnorm_scores", help="AS-Norm score file: its target trials give the FRR")
     parser.add_argument("out_tsv")
+    parser.add_argument("--condition", default="pcm16k", help="written in each row")
     args = parser.parse_args()
     genders = read_genders(args.meta_csv)
     cohort = np.load(args.cohort_npz)["embeddings"]
@@ -86,7 +87,7 @@ if __name__ == "__main__":
                 pairs = {tuple(sorted(p)) for p in zip(*sides, strict=True)}
                 rows.append(
                     {
-                        "condition": "pcm16k",
+                        "condition": args.condition,
                         "bucket": bucket,
                         "band": band,
                         "far": f"{far:g}",

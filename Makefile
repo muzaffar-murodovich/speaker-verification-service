@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm eer-conditions degraded-cohorts degraded-asnorm-scores eer-conditions-asnorm operating-points det test lint format eval clean
+.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm eer-conditions degraded-cohorts degraded-asnorm-scores eer-conditions-asnorm operating-points operating-points-conditions det test lint format eval clean
 
 help: ## Show available targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -190,6 +190,15 @@ OPERATING_POINTS := artifacts/calibration/voxceleb1-pcm16k.tsv
 
 operating-points: ## STRONG and PROBABLE threshold per bucket from FRR at a fixed FAR
 	uv run python -m svs.calibrate $(EMB_DIR) $(EMB_DIR)-videos $(META) $(COHORT).npz $(ASNORM_SCORES) $(OPERATING_POINTS)
+
+# D9 per condition: fresh non-targets from that condition's embeddings, normalised
+# with that condition's cohort; the targets come from its AS-Norm score file.
+COND_POINTS := $(DEGRADED:%=artifacts/calibration/voxceleb1-%.tsv)
+
+artifacts/calibration/voxceleb1-%.tsv: artifacts/scores/voxceleb1-%-asnorm.tsv
+	uv run python -m svs.calibrate $(COND_DIR)/$*/clips $(COND_DIR)/$*/videos $(META) $(COHORT)-$*.npz $< $@ --condition $*
+
+operating-points-conditions: $(COND_POINTS) ## As operating-points, for every degraded condition
 
 DET := artifacts/plots/voxceleb1-det.png
 
