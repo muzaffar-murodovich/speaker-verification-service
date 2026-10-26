@@ -858,3 +858,73 @@ function, thresholds for smaller pools.
 **Open items for the mentor**
 
 14. Choice 19 above; and the > 120 s STRONG thresholds, which rest on 2 false accepts.
+
+## 2026-10-26 — D9: precision and recall at each threshold
+
+SVS guide §8.4 step 5: record precision and recall at each threshold, with the trial
+count. Commit 525610e adds two columns to every operating-point table: `recall`
+(1 − FRR over the targets) and `precision_pool50000`. The earlier ten columns are
+unchanged (same SHA-256 when cut to them). New tables (sha256): pcm16k bfbb2060, pcm8k
+d1289308, g711a 311b5c44, g711u 21fcb711, g729 ffa1b0bf, opus 3de29622, noise15
+8bbcbf2b, noise5 b88673a5.
+
+**What the precision means.** On the trial list (two non-targets per target) precision
+is close to 1 and says nothing about the service. Here it is the share of right answers
+for one identify query against a pool of 50,000 profiles that holds the true speaker:
+the true profile passes with probability recall, each other profile with the measured
+FAR (false accepts / non-targets), so precision = recall / (recall + 50,000 × FAR).
+Example, clean 3-10 s STRONG: 0.667 / (0.667 + 50,000 × 10 / 5,000,000) = 0.870.
+
+**Precision / recall at STRONG** (FAR 2e-6):
+
+| condition | 3-10 s | 10-30 s | 30-120 s | > 120 s |
+| --- | --- | --- | --- | --- |
+| pcm16k | 0.870 / 0.6670 | 0.892 / 0.8262 | 0.897 / 0.8664 | 0.920 / 0.9191 |
+| pcm8k | 0.769 / 0.3320 | 0.839 / 0.5212 | 0.861 / 0.6218 | 0.889 / 0.6499 |
+| g711a | 0.754 / 0.3071 | 0.839 / 0.5209 | 0.852 / 0.5777 | 0.885 / 0.6406 |
+| g711u | 0.755 / 0.3082 | 0.848 / 0.5592 | 0.852 / 0.5760 | 0.887 / 0.6435 |
+| g729 | 0.604 / 0.1523 | 0.789 / 0.3733 | 0.820 / 0.4542 | 0.881 / 0.5725 |
+| opus | 0.837 / 0.5123 | 0.883 / 0.7516 | 0.895 / 0.8555 | 0.917 / 0.8904 |
+| noise15 | 0.836 / 0.5107 | 0.884 / 0.7585 | 0.894 / 0.8459 | 0.918 / 0.9352 |
+| noise5 | 0.785 / 0.3646 | 0.865 / 0.6402 | 0.892 / 0.8231 | 0.916 / 0.9055 |
+
+**Precision / recall at PROBABLE** (FAR 2e-5):
+
+| condition | 3-10 s | 10-30 s | 30-120 s | > 120 s |
+| --- | --- | --- | --- | --- |
+| pcm16k | 0.435 / 0.7610 | 0.478 / 0.9070 | 0.486 / 0.9351 | 0.498 / 0.9565 |
+| pcm8k | 0.342 / 0.5148 | 0.425 / 0.7306 | 0.440 / 0.7777 | 0.463 / 0.8362 |
+| g711a | 0.323 / 0.4713 | 0.418 / 0.7116 | 0.439 / 0.7760 | 0.456 / 0.8388 |
+| g711u | 0.335 / 0.4993 | 0.417 / 0.7088 | 0.442 / 0.7845 | 0.460 / 0.8378 |
+| g729 | 0.229 / 0.2942 | 0.357 / 0.5500 | 0.385 / 0.6194 | 0.425 / 0.7131 |
+| opus | 0.410 / 0.6867 | 0.468 / 0.8717 | 0.483 / 0.9243 | 0.493 / 0.9436 |
+| noise15 | 0.406 / 0.6763 | 0.468 / 0.8697 | 0.483 / 0.9257 | 0.498 / 0.9520 |
+| noise5 | 0.347 / 0.5261 | 0.440 / 0.7770 | 0.478 / 0.9058 | 0.486 / 0.9394 |
+
+Trial counts per row: the n_target and n_nontarget columns of the tables (above, and
+2026-10-22 entry).
+
+- The STRONG rule (N × FAR ≤ 0.1) caps precision at recall / (recall + 0.1), so below
+  1 / 1.1 = 0.909 even at recall 1 (> 120 s goes slightly above it only because its
+  measured FAR, 1.5-1.7e-6, is under 2e-6). No row reaches the guide's typical STRONG
+  precision of ≥ 0.97 (§4.5); that needs about 0.03 false accepts per query.
+- At PROBABLE about one impostor per query passes (50,000 × 2e-5), so precision is
+  0.23-0.50, far below the guide's 0.85-0.95.
+- 8 kHz lowers precision because it lowers recall: the false accepts per query are fixed
+  by the FAR, the true accepts fall (G.729 3-10 s: recall 0.152, precision 0.604).
+- A smaller pool raises precision directly (pool 500 at PROBABLE: 0.01 false accepts per
+  query). That is the guide's "filter first" (§4.6); pool size is D14 work.
+
+**Choice where the handbook and the SVS guide are silent** (the mentor may disagree):
+
+20. Precision is for one identify query against a pool of 50,000 (choice 15) that holds
+    the true speaker, from the measured FAR. If the speaker may be missing from the pool,
+    precision is lower, so these values are upper bounds for that pool.
+
+**Open items for the mentor**
+
+15. Choice 20 above. And: with STRONG from N × FAR ≤ 0.1 at N = 50,000, precision
+    cannot reach the guide's ≥ 0.97 for STRONG or 0.85-0.95 for PROBABLE. Are the
+    guide's typical precisions meant for filtered pools?
+
+**Next:** WEAK floor, band function (score + condition → band) with a test.
