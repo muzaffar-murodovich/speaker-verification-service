@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm eer-conditions degraded-cohorts degraded-asnorm-scores eer-conditions-asnorm operating-points operating-points-conditions operating-points-table quality det det-conditions test lint format eval clean
+.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm eer-conditions degraded-cohorts degraded-asnorm-scores eer-conditions-asnorm operating-points operating-points-conditions operating-points-table quality quality-eval det det-conditions test lint format eval clean
 
 help: ## Show available targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -220,6 +220,11 @@ artifacts/quality/voxceleb1-%.tsv:
 	uv run python -m svs.quality_cache $(VOX_DIR)/wav $(META) $(call clips_of,$*) $@ --condition $*
 
 quality: $(QUALITY_CONDITIONS:%=artifacts/quality/voxceleb1-%.tsv) ## Quality of every clip and video per condition (~14 min each on the Mac, 6 workers)
+
+asnorm_of = $(if $(filter pcm16k,$(1)),$(ASNORM_SCORES),artifacts/scores/voxceleb1-$(1)-asnorm.tsv)
+
+quality-eval: quality ## EER on the worst and best quality decile, and what the usability gate refuses
+	uv run python -m svs.quality_eval $(foreach c,$(QUALITY_CONDITIONS),$(c)=$(call asnorm_of,$(c))$(comma)artifacts/quality/voxceleb1-$(c).tsv)
 
 DET := artifacts/plots/voxceleb1-det.png
 
