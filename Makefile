@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm eer-conditions degraded-cohorts degraded-asnorm-scores eer-conditions-asnorm operating-points operating-points-conditions operating-points-table det det-conditions test lint format eval clean
+.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm eer-conditions degraded-cohorts degraded-asnorm-scores eer-conditions-asnorm operating-points operating-points-conditions operating-points-table quality det det-conditions test lint format eval clean
 
 help: ## Show available targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -209,6 +209,17 @@ operating-points-table: ## Join EER and operating points of every condition into
 	uv run python -m svs.optable pcm16k=$(ASNORM_SCORES),$(OPERATING_POINTS) \
 		$(foreach c,$(DEGRADED),$(c)=artifacts/scores/voxceleb1-$(c)-asnorm.tsv$(comma)artifacts/calibration/voxceleb1-$(c).tsv) \
 		--out $(OPTABLE)
+
+# D10: quality of every clip and video (SVS guide Appendix C). g711a, g711u, g729 and
+# opus depend on codec library versions, so they run on the home PC like their
+# embeddings (LOG.md, D6); QUALITY_CONDITIONS picks which conditions this machine runs.
+QUALITY_CONDITIONS ?= pcm16k pcm8k noise15 noise5
+clips_of = $(if $(filter pcm16k,$(1)),$(EMB_DIR),$(COND_DIR)/$(1)/clips)
+
+artifacts/quality/voxceleb1-%.tsv:
+	uv run python -m svs.quality_cache $(VOX_DIR)/wav $(META) $(call clips_of,$*) $@ --condition $*
+
+quality: $(QUALITY_CONDITIONS:%=artifacts/quality/voxceleb1-%.tsv) ## Quality of every clip and video per condition (~14 min each on the Mac, 6 workers)
 
 DET := artifacts/plots/voxceleb1-det.png
 
