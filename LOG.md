@@ -1036,3 +1036,116 @@ at a fixed FAR (choice 15), four bands — done. M2 left: minDCF with prior and 
 **Open items for the mentor**
 
 17. Thresholds rise with duration here and fall in the guide's reference (above).
+
+## 2026-10-27 — D10: minDCF, the quality score and the usability gate
+
+**minDCF** (commit 577e2bd; `make eer-conditions`, `make eer-conditions-asnorm`, and a
+new column in docs/operating-points.tsv). Prior and costs: p_target 0.01, c_miss 1,
+c_fa 1 (choice 22). Normalised by the better of accept-all and reject-all, so 1.0 means
+the scores are worth nothing. AS-Norm, per bucket (3-10 / 10-30 / 30-120 / >120 s):
+
+| condition | minDCF                          |
+| --------- | ------------------------------- |
+| pcm16k    | 0.1227 / 0.0475 / 0.0412 / 0.0285 |
+| pcm8k     | 0.2695 / 0.1330 / 0.1109 / 0.0784 |
+| g711a     | 0.2828 / 0.1402 / 0.1078 / 0.0862 |
+| g711u     | 0.2781 / 0.1409 / 0.1086 / 0.0839 |
+| g729      | 0.4424 / 0.2333 / 0.1906 / 0.1374 |
+| opus      | 0.1711 / 0.0652 / 0.0558 / 0.0333 |
+| noise15   | 0.1643 / 0.0674 / 0.0486 / 0.0301 |
+| noise5    | 0.2507 / 0.1132 / 0.0603 / 0.0369 |
+
+Trial counts as in the D7 table (up to 50,000 target / 100,000 non-target per bucket;
+>120 s has 3,102 targets). AS-Norm lowers minDCF in 3-10 s under every condition
+(clean 0.1349 → 0.1227, pcm8k 0.3068 → 0.2695, G.729 0.5444 → 0.4424); in >120 s it
+does not always (clean 0.0265 → 0.0285), where the targets are few. minDCF ranks the
+conditions as EER does. At p_target 0.01 one false accept in 100,000 non-targets adds
+about 0.001, so the >120 s values rest on a handful of trials.
+
+p_target 0.01 does not describe our service: one query against a pool of 50,000 has a
+prior near 1/50,000. minDCF here is for comparing models and conditions; the service's
+operating points stay the D9 thresholds from FRR at a fixed FAR (choice 15).
+
+**Quality score** (commit 5488795, `svs.quality`, `make quality`; ~15 min per
+condition on the Mac, 6 workers). The Appendix C composite with its weights, version
+`appendix-c-v1`. How each input is measured is choice 23. Every VoxCeleb1 clip
+(153,516) and video (22,496) under pcm16k, pcm8k, noise15 and noise5, in
+artifacts/quality/voxceleb1-<condition>.tsv (sha256 89dc8f5b, 88ca9339, f620f954,
+ffd51fef). g711a/u, G.729 and Opus depend on codec library versions, so their quality
+runs on the home PC with their embeddings (not done yet).
+
+Clips of at least 3.0 s, median quality: pcm16k 0.967, pcm8k 0.973, noise15 0.889,
+noise5 0.829; lowest 0.572-0.606. Median SNR estimate: 22.9 / 23.4 / 17.6 / 13.7 dB.
+Bandwidth: median 7,938 Hz wideband, 4,125 Hz on pcm8k; Appendix C gives full marks
+from 3,500 Hz, so this input does not separate 8 kHz from 16 kHz. Median turn
+consistency of videos with two or more clips: 0.783 clean, 0.691 noise5.
+
+**Does quality predict errors?** (commit c80511b, `make quality-eval`, 12 s). Trial
+quality = the worse side; deciles within each bucket (choice 25). EER of the worst
+tenth against the best tenth:
+
+| condition | 3-10 s        | 10-30 s       | 30-120 s      | >120 s        |
+| --------- | ------------- | ------------- | ------------- | ------------- |
+| pcm16k    | 2.093 / 1.113 | 0.879 / 0.354 | 1.062 / 0.538 | 0.089 / 0.211 |
+| pcm8k     | 4.259 / 2.343 | 1.934 / 1.133 | 2.111 / 0.926 | 0.796 / 0.572 |
+| noise15   | 2.228 / 1.210 | 1.013 / 0.600 | 1.200 / 0.539 | 0.405 / 0.378 |
+| noise5    | 4.333 / 1.843 | 1.834 / 0.787 | 1.307 / 0.586 | 0.780 / 0.198 |
+
+Each tenth holds about 4,100-5,900 targets and 8,900-10,900 non-targets, except
+>120 s: about 230-520 targets. In the three shorter buckets the worst tenth has 1.7 to
+2.5 times the EER of the best, under every condition: the composite does rank trials
+by how likely they are to fail. In >120 s the result is mixed (clean is reversed) on
+too few targets to tell. Many trials share quality 1.0 (in clean 10-30 s more than a
+tenth), so the best tenth is a seeded random sample of them; the trial list is grouped
+by type, and an earlier version that kept file order put 739 targets and 14,261
+non-targets into one best tenth.
+
+**The usability gate** (`svs.quality.unusable_reason`): refuse under 3.0 s of speech
+(`E_SV_INSUFFICIENT_SPEECH`), then turn consistency under 0.55
+(`E_SV_TURN_INCONSISTENT`), then quality under 0.45 (`E_SV_LOW_QUALITY`); defaults
+from SVS guide Appendix A, order from its §3.2 example (choice 24).
+
+- The quality floor refuses **no** clip or video under these four conditions: no unit
+  of at least 3.0 s with consistent turns falls below 0.45.
+- Turn consistency refuses multi-clip videos, so only the 30-120 s and >120 s buckets
+  (the video buckets): 30-120 s refuses 417 trials clean (102 targets), 597 pcm8k,
+  1,031 noise15, 8,703 noise5 (2,471 targets). EER on what passes: clean
+  0.559 → 0.536 %, noise5 0.776 → 0.727 %; in >120 s it changes by 0.02 at most.
+- VoxCeleb1 videos are meant to hold one speaker, so most of these refusals are
+  probably one speaker whose clips differ (noise lowers the clip-to-clip cosine), not
+  two people. The gate then refuses true speakers; on this data the 0.55 default is a
+  noise detector as much as a diarization check (open item 19).
+
+**Choices where the handbook and the SVS guide are silent** (the mentor may disagree):
+
+22. minDCF at p_target 0.01, c_miss = c_fa = 1: the defaults of WeSpeaker's
+    wespeaker/bin/compute_metrics.py (checked in its source, 2026-10-27), with the same
+    normalisation, so our numbers are computed the way the model's own toolkit does.
+23. Quality inputs: SNR = speech power (VAD frames, noise taken off) over the mean
+    power of the quietest 10 % of 20 ms frames; clipping = share of samples within 1 %
+    of the clip's peak (relative to the peak, because G.711 never decodes to full
+    scale); bandwidth = highest frequency within 40 dB of the spectral peak (Welch,
+    32 ms windows); a clip is one turn (consistency 1.0), a video's turns are its clips
+    (cached clip embeddings; clips under 3.0 s are not turns).
+24. Gate order: speech, then turn consistency, then quality.
+25. Trial quality = the lower of its two sides; deciles within each duration bucket,
+    so duration does not pose as quality.
+
+**Open items for the mentor**
+
+18. The Appendix C weights are the guide's starting point, not fitted. The guide says
+    to fit them against our own accuracy and freeze them; the decile table shows the
+    composite already ranks errors. Fit them now on VoxCeleb1, or wait for internal
+    data (D16-D17)?
+19. On VoxCeleb1 the quality floor refuses nothing, and turn consistency refuses mostly
+    one-speaker videos under noise (above). Keep the guide defaults 0.45 / 0.55?
+20. The SNR estimate reads high under added noise: noise5 is mixed at 5 dB, its median
+    estimate is 13.7 dB. MUSAN noise varies in level, so the quietest frames
+    under-state it. An estimate, not a measurement; it still ranks noise5 below
+    noise15 below clean.
+21. Quality for g711a/u, G.729 and Opus still to run on the home PC.
+
+**Handbook D10 status:** minDCF with prior and costs — done (M2 item closed). Quality
+score and usability gate — done, measured on four conditions. M2 left: the 3.0 s
+refusal as a service test, with the API (week 3). Mid-program checkpoint: the mentor
+meeting itself.
