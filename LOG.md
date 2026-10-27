@@ -1149,3 +1149,45 @@ from SVS guide Appendix A, order from its §3.2 example (choice 24).
 score and usability gate — done, measured on four conditions. M2 left: the 3.0 s
 refusal as a service test, with the API (week 3). Mid-program checkpoint: the mentor
 meeting itself.
+
+## 2026-10-27 — D11: Qdrant in Docker, the profile collection
+
+- `docker-compose.yml` runs Qdrant (`make qdrant`); its storage is a named Docker
+  volume, so a collection survives `docker compose down` / `up` (checked).
+- `svs.store.ProfileStore` holds profile centroids in one collection per embedding model
+  version (handbook D11, SVS guide §7.2). `make store` creates it:
+  `spk_profile_voxceleb_ecapa512_lm_a2f3dcb1_16cdc462`, cosine, 192 dims, HNSW m=32,
+  ef_construct=256, keyword indexes on `status` and `source`, datetime on `last_seen`,
+  float on `evidence_seconds` (read back from the server).
+- Cross-version comparison is impossible by construction: a store addresses only its
+  own version's collection, and an upsert or search that names another version raises
+  `E_SV_MODEL_VERSION_MISMATCH` (§3.8). Tests: the refusal; a v2 point identical to the
+  query never appears in a v1 search; every payload field required; index settings
+  read back from the Docker server. Each guard was removed once and its test failed.
+- Qdrant's local mode (`QdrantClient(":memory:")`) silently ignores HNSW settings and
+  payload indexes (it reported m=16 when asked for 32). The settings test therefore runs
+  against the Docker server, and is skipped when none is up; the behaviour tests use
+  local mode and always run.
+
+**Choices where the handbook and the SVS guide are silent** (the mentor may disagree):
+
+26. Qdrant server v1.19.2 and qdrant-client 1.19.1 (same minor version). v1.20.0 was
+    six days old on 2026-10-27; the previous minor has three weeks of patch releases.
+27. Collection name = `spk_profile_` + the version lowercased (other characters → `_`)
+    + the first 8 hex digits of SHA-256 of the exact version string. Without the hash,
+    `ecapa-v3` and `ecapa_v3` would share one collection.
+28. `full_scan_threshold` 20,000 and no quantization on profiles: SVS guide §7.4 and
+    §7.2 (the handbook names only m and ef_construct).
+29. Qdrant point id = UUID5 of the profile id (Qdrant takes only integers or UUIDs);
+    the profile id itself is kept in the payload.
+
+**Where the handbook and the guide differ:** the guide's Qdrant example (§7.7) is the
+occurrence collection, with `arrived_at`, `speech_seconds`, `project_ids`. The handbook's
+D11 fields (`status`, `source`, `last_seen`, `evidence_seconds`) are profile fields, so
+they go on the profile collection; the handbook wins.
+
+**Open items for the mentor**
+
+22. Only the profile collection exists. The guide also has occurrence collections
+    (`spk_occ_hot_<ver>`, `spk_occ_cold_<ver>`); the handbook's week 3 searches profiles
+    only. Add them now, or only if identify is meant to match occurrences?
