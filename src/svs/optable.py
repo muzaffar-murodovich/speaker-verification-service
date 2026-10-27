@@ -12,7 +12,7 @@ from pathlib import Path
 from svs.calibrate import POOL_SIZE, precision
 from svs.cohort import COHORT_VERSION
 from svs.embed import MODEL_VERSION
-from svs.metrics import eer, read_bucket_scores
+from svs.metrics import P_TARGET, eer, min_dcf, read_bucket_scores
 
 CLEAN = "pcm16k"
 BAND_ORDER = ("STRONG", "PROBABLE", "WEAK")  # highest threshold first
@@ -39,7 +39,7 @@ def band_precision(row: dict, above: dict | None) -> float:
 def table_rows(condition: str, scores_tsv: str, points_tsv: str) -> list[dict]:
     """The rows of one condition, STRONG, PROBABLE, WEAK within each bucket."""
     eers = {
-        bucket: (eer(t, n)[0], len(t), len(n))
+        bucket: (eer(t, n)[0], min_dcf(t, n)[0], len(t), len(n))
         for bucket, (t, n) in read_bucket_scores(scores_tsv).items()
     }
     with open(points_tsv, newline="") as f:
@@ -47,7 +47,7 @@ def table_rows(condition: str, scores_tsv: str, points_tsv: str) -> list[dict]:
     if {p["condition"] for p in points} != {condition}:
         raise ValueError(f"{points_tsv} is not the table of {condition}")
     rows = []
-    for bucket, (rate, n_target, n_nontarget) in eers.items():
+    for bucket, (rate, cost, n_target, n_nontarget) in eers.items():
         by_band = {p["band"]: p for p in points if p["bucket"] == bucket}
         above = None
         for band in BAND_ORDER:
@@ -69,6 +69,8 @@ def table_rows(condition: str, scores_tsv: str, points_tsv: str) -> list[dict]:
                     f"precision_pool{POOL_SIZE}": p["precision"],
                     f"band_precision_pool{POOL_SIZE}": f"{band_precision(p, above):.3f}",
                     "eer_%": f"{100 * rate:.3f}",
+                    # Equal costs (svs.metrics C_MISS, C_FA); the prior is in the name.
+                    f"mindcf_p{P_TARGET}": f"{cost:.4f}",
                     "eer_n_target": n_target,
                     "eer_n_nontarget": n_nontarget,
                 }

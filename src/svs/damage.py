@@ -1,4 +1,4 @@
-"""EER per condition and bucket, and what the clean 16 kHz threshold does under each one.
+"""EER and minDCF per condition and bucket, and what the clean 16 kHz threshold does under each one.
 
 Handbook D7: measure the damage per codec, sample rate and duration bucket. Every
 condition scores the same trial list, so a trial missing from a condition's file was
@@ -11,7 +11,7 @@ from collections import Counter
 
 import numpy as np
 
-from svs.metrics import GENDERS, eer
+from svs.metrics import GENDERS, P_TARGET, eer, min_dcf
 from svs.trials import BUCKETS
 
 CLEAN = "pcm16k"
@@ -83,6 +83,7 @@ def damage_rows(
                     "group": group,
                     "eer": rate,
                     "threshold": threshold,
+                    "min_dcf": min_dcf(target, nontarget)[0],
                     "n_target": len(target),
                     "n_nontarget": len(nontarget),
                     # Refused under this condition, whatever common_only drops on top.
@@ -104,12 +105,12 @@ if __name__ == "__main__":
     for by_gender in (False, True):
         group = "bucket gender" if by_gender else "bucket"
         print(
-            f"condition\t{group}\tEER_%\tthreshold\tn_target\tn_nontarget\trefused"
+            f"condition\t{group}\tEER_%\tthreshold\tminDCF_p{P_TARGET}\tn_target\tn_nontarget\trefused"
             "\tFRR_%_at_clean_threshold\tFAR_%_at_clean_threshold"
         )
         for r in damage_rows(files, args.common, by_gender):
             print(
                 f"{r['condition']}\t{r['group']}\t{100 * r['eer']:.3f}\t{r['threshold']:.4f}"
-                f"\t{r['n_target']}\t{r['n_nontarget']}\t{r['refused']}"
+                f"\t{r['min_dcf']:.4f}\t{r['n_target']}\t{r['n_nontarget']}\t{r['refused']}"
                 f"\t{100 * r['frr_at_clean']:.3f}\t{100 * r['far_at_clean']:.3f}"
             )

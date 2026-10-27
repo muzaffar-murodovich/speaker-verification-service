@@ -1,9 +1,9 @@
-"""Equal error rate."""
+"""Equal error rate and minDCF."""
 
 import numpy as np
 import pytest
 
-from svs.metrics import eer, read_bucket_scores
+from svs.metrics import eer, min_dcf, read_bucket_scores
 
 
 def test_eer_of_a_hand_counted_example():
@@ -26,6 +26,32 @@ def test_a_tie_between_target_and_nontarget_is_a_coin_flip():
 def test_eer_needs_both_kinds_of_trial():
     with pytest.raises(ValueError, match="both target and non-target"):
         eer(np.array([0.5]), np.array([]))
+
+
+def test_min_dcf_of_a_hand_counted_example():
+    # p_target 0.01, equal costs. At threshold 0.7 one of three targets (0.4) is missed and
+    # no non-target is accepted: DCF = 0.01 * 1/3, divided by 0.01 gives 1/3. Threshold 0.4
+    # instead accepts one of four non-targets: 0.99 * 1/4 = 0.2475, far more costly.
+    target = np.array([0.9, 0.7, 0.4])
+    nontarget = np.array([0.6, 0.3, 0.2, 0.1])
+    cost, threshold = min_dcf(target, nontarget)
+    assert cost == pytest.approx(1 / 3)
+    assert threshold == 0.7
+
+
+def test_min_dcf_never_exceeds_rejecting_everything():
+    # Any threshold at or below 0.5 accepts the non-target (cost 0.99 / 0.01 = 99);
+    # rejecting every trial costs exactly the normaliser, so the minimum is 1.0.
+    cost, threshold = min_dcf(np.array([0.5]), np.array([0.5]))
+    assert (cost, threshold) == (pytest.approx(1.0), np.inf)
+
+
+def test_min_dcf_weighs_false_alarms_by_the_prior():
+    # One missed target versus one accepted non-target, 2 trials each side. With equal
+    # costs and p_target 0.5 the two errors cost the same; at 0.01 the miss is cheaper.
+    target, nontarget = np.array([0.3, 0.9]), np.array([0.1, 0.5])
+    assert min_dcf(target, nontarget, p_target=0.5)[0] == pytest.approx(0.5)
+    assert min_dcf(target, nontarget)[1] == 0.9
 
 
 def test_scores_are_grouped_by_bucket_and_gender(tmp_path):

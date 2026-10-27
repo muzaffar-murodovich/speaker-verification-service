@@ -1,4 +1,4 @@
-"""Verification metrics: equal error rate (EER) per duration bucket."""
+"""Verification metrics: equal error rate (EER) and minDCF per duration bucket."""
 
 import argparse
 import csv
@@ -38,6 +38,37 @@ def eer(target: NDArray, nontarget: NDArray) -> tuple[float, float]:
     return float((miss[i] + false_alarm[i]) / 2), float(thresholds[i])
 
 
+# minDCF prior and costs. Docs are silent on the values (handbook M2: state them; SVS
+# guide §8.2 gives none). p_target 0.01 with equal costs is the default of WeSpeaker's
+# wespeaker/bin/compute_metrics.py, with the same normalisation, so our numbers are
+# computed the way the model's own toolkit computes them.
+P_TARGET = 0.01
+C_MISS = 1.0
+C_FA = 1.0
+
+
+def min_dcf(
+    target: NDArray,
+    nontarget: NDArray,
+    p_target: float = P_TARGET,
+    c_miss: float = C_MISS,
+    c_fa: float = C_FA,
+) -> tuple[float, float]:
+    """Normalised minimum detection cost and its threshold.
+
+    DCF = c_miss * p_target * miss + c_fa * (1 - p_target) * false_alarm, at every
+    threshold. It is divided by the cost of the better of the two systems that need no
+    scores (accept all, reject all), so 1.0 means the scores are worth nothing.
+    Rejecting every trial (threshold above every score) is a candidate too.
+    """
+    thresholds, miss, false_alarm = error_rates(target, nontarget)
+    thresholds = np.append(thresholds, np.inf)
+    miss, false_alarm = np.append(miss, 1.0), np.append(false_alarm, 0.0)
+    dcf = c_miss * p_target * miss + c_fa * (1 - p_target) * false_alarm
+    i = np.argmin(dcf)
+    return float(dcf[i] / min(c_miss * p_target, c_fa * (1 - p_target))), float(thresholds[i])
+
+
 GENDERS = ("f", "m")
 
 
@@ -62,7 +93,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
     for by_gender in (False, True):
         group = "bucket gender" if by_gender else "bucket"
-        print(f"{group}\tEER_%\tthreshold\tn_target\tn_nontarget")
+        print(f"{group}\tEER_%\tthreshold\tminDCF_p{P_TARGET}\tn_target\tn_nontarget")
         for key, (target, nontarget) in read_bucket_scores(args.scores_tsv, by_gender).items():
             rate, threshold = eer(target, nontarget)
-            print(f"{key}\t{100 * rate:.3f}\t{threshold:.4f}\t{len(target)}\t{len(nontarget)}")
+            cost = min_dcf(target, nontarget)[0]
+            print(
+                f"{key}\t{100 * rate:.3f}\t{threshold:.4f}\t{cost:.4f}"
+                f"\t{len(target)}\t{len(nontarget)}"
+            )
