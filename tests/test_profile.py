@@ -1,4 +1,5 @@
-"""Profile centroid: log1p weight with a cap, exact weighted mean, order independence."""
+"""Profile centroid (log1p weight with a cap, exact weighted mean, order independence)
+and the evidence rule for PROVISIONAL -> CONFIRMED, one test per condition."""
 
 import math
 
@@ -6,7 +7,16 @@ import numpy as np
 import pytest
 
 from svs.embed import EMBEDDING_DIM
-from svs.profile import MAX_OCC_WEIGHT, Occurrence, Profile, occurrence_weight
+from svs.profile import (
+    CONFIRMED,
+    MAX_OCC_WEIGHT,
+    PROMOTE_MIN_COHESION,
+    PROVISIONAL,
+    EnrolRuleUnmet,
+    Occurrence,
+    Profile,
+    occurrence_weight,
+)
 
 
 def unit(seed: int) -> np.ndarray:
@@ -53,3 +63,67 @@ def test_centroid_does_not_depend_on_arrival_order():
 def test_an_empty_profile_has_no_centroid():
     with pytest.raises(ValueError, match="no accepted occurrence"):
         _ = Profile("spk_empty").centroid
+
+
+def near(seed: int) -> np.ndarray:
+    """One speaker's embedding: a fixed direction plus a little noise (cosine about 0.96)."""
+    v = unit(0) + 0.3 * unit(100 + seed)
+    return (v / np.linalg.norm(v)).astype(np.float32)
+
+
+def profile_of(*occs: Occurrence) -> Profile:
+    profile = Profile("spk_1")
+    for o in occs:
+        profile.accept(o)
+    return profile
+
+
+def test_cohesion_is_the_mean_cosine_to_the_centroid():
+    profile = profile_of(occ(1, 30, 0.8), occ(2, 12, 0.6), occ(3, 600, 0.9))
+    c = profile.centroid.astype(np.float64)
+    expected = np.mean([o.embedding @ c for o in profile.occurrences])
+    assert profile.cohesion == pytest.approx(expected)
+
+
+def test_promotion_when_every_condition_holds():
+    profile = profile_of(
+        Occurrence("rec_a", near(1), 70, 0.8), Occurrence("rec_b", near(2), 60, 0.7)
+    )
+    assert profile.status == PROVISIONAL
+    assert profile.promotion_missing() == []
+    profile.promote()
+    assert profile.status == CONFIRMED
+
+
+def test_one_recording_is_refused_however_long():
+    # 300 s of clean, consistent speech, but all from one recording.
+    profile = profile_of(
+        Occurrence("rec_a", near(1), 150, 0.9), Occurrence("rec_a", near(2), 150, 0.9)
+    )
+    assert profile.sessions == 1
+    assert profile.promotion_missing() == ["sessions"]
+    with pytest.raises(EnrolRuleUnmet) as err:
+        profile.promote()
+    assert err.value.code == "E_SV_ENROL_RULE_UNMET"
+    assert profile.status == PROVISIONAL
+
+
+def test_too_little_speech_is_refused():
+    profile = profile_of(
+        Occurrence("rec_a", near(1), 61.9, 0.8), Occurrence("rec_b", near(2), 50, 0.8)
+    )
+    assert profile.promotion_missing() == ["evidence_seconds"]
+
+
+def test_low_mean_quality_is_refused():
+    profile = profile_of(
+        Occurrence("rec_a", near(1), 70, 0.7), Occurrence("rec_b", near(2), 60, 0.45)
+    )
+    assert profile.promotion_missing() == ["mean_quality"]
+
+
+def test_an_incoherent_profile_is_refused():
+    # Three unrelated directions: each is about 1/sqrt(3) = 0.58 from their mean.
+    profile = profile_of(*(Occurrence(f"rec_{s}", unit(s), 50, 0.8) for s in (1, 2, 3)))
+    assert profile.cohesion < PROMOTE_MIN_COHESION
+    assert profile.promotion_missing() == ["cohesion"]
