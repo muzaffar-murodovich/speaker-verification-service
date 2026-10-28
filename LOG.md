@@ -1191,3 +1191,16 @@ they go on the profile collection; the handbook wins.
 22. Only the profile collection exists. The guide also has occurrence collections
     (`spk_occ_hot_<ver>`, `spk_occ_cold_<ver>`); the handbook's week 3 searches profiles
     only. Add them now, or only if identify is meant to match occurrences?
+
+## 2026-10-28 — D10 open item 21 closed: quality on the codec conditions
+
+- Quality for g711a, g711u, G.729 and Opus computed on the home PC (same codec library
+  versions as their embeddings), 176,012 rows each, at 31fbb77; copied to the Mac and
+  `make quality-eval` run on all eight conditions. Rows d10-quality-decile-* and
+  d10-gate-* for the four codecs in experiments.csv.
+- Worst-quality tenth vs best, EER ratio in 3-10 s to 30-120 s: g711a 1.8-2.1x, g711u
+  1.8-2.3x, G.729 2.0-2.7x, Opus 1.6-2.4x. Same picture as the four earlier conditions
+  (1.7-2.5x): the composite ranks errors under codecs too.
+- Gate: as before, the quality floor 0.45 refuses no trial; only turn consistency
+  refuses, in 30-120 s and >120 s (e.g. g711a 551 + 168 trials). G.729 refuses fewer
+  (334 + 92) than clean (417 + 76); not looked into.
