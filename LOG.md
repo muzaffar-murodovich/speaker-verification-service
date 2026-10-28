@@ -1204,3 +1204,59 @@ they go on the profile collection; the handbook wins.
 - Gate: as before, the quality floor 0.45 refuses no trial; only turn consistency
   refuses, in 30-120 s and >120 s (e.g. g711a 551 + 168 trials). G.729 refuses fewer
   (334 + 92) than clean (417 + 76); not looked into.
+
+## 2026-10-28 — D12: the profile model and the evidence rule
+
+- `svs.profile.Profile` keeps `sum_vec` (float64, 192) and `sum_w`; the centroid is
+  `sum_vec / |sum_vec|` (SVS guide §5.4). Weight of one occurrence =
+  min(quality × log1p(seconds), 3.0) (`CFG_SV_MAX_OCC_WEIGHT`). Example: 0.8 at 30 s →
+  2.747; 0.9 at 600 s → 5.759, capped to 3.0 (a linear weight would give 24 and 540).
+  Commit 1e6aa48.
+- Evidence rule (§5.2, handbook M3): ≥ 120 s, ≥ 2 distinct recordings, mean quality
+  ≥ 0.6, cohesion ≥ 0.65. `promote()` makes a PROVISIONAL profile CONFIRMED, or raises
+  `E_SV_ENROL_RULE_UNMET` naming what is missing (the `missing` list of §3.5).
+  300 s of speech from one recording is refused. Commit ff1a8b8.
+- Centroid update (§5.3, §3.6, handbook M3): `update()` refuses any band below STRONG
+  with `E_SV_UPDATE_BAND_TOO_LOW`; under 3.0 s or quality below 0.45 an occurrence never
+  enters (`E_SV_INSUFFICIENT_SPEECH`, `E_SV_LOW_QUALITY`). Commit 23dc78e.
+- Tests: weight, cap, exact weighted mean, order independence, one test per rule
+  condition, the band gate, the two floors. Each guard was removed once and its test
+  failed. 236 tests pass.
+- `make profile-eval` (8bdb21a, rows d12-evidence-* in experiments.csv): the rule on all
+  1,251 VoxCeleb1 speakers, one video = one recording, after the usability gate.
+  - All of a speaker's videos in one profile: 1,251 / 1,251 promoted in six conditions;
+    noise5 and G.729 each refuse one speaker (evidence_seconds; cohesion). Lowest
+    cohesion 0.647 (G.729) to 0.687 (clean); median 0.843-0.865. So the guide's 0.65,
+    set for another model, does not refuse our true speakers.
+  - Two videos of one speaker: cohesion below 0.65 for 0 speakers in every condition.
+  - The same two plus one video of another speaker: below 0.65 for only 0.6 % (G.729)
+    to 9.8 % (noise5) of speakers. Clean 5.4 %. One wrong occurrence in three moves
+    cohesion too little to be caught. Example (id10001, clean): three own videos give
+    0.919; adding one id10002 video gives 0.698, still above 0.65, while that video's own
+    cosine to the centroid is 0.089.
+
+**Choices where the handbook and the SVS guide are silent** (the mentor may disagree):
+
+30. Cohesion is the plain mean of each occurrence's cosine to the centroid, not
+    weighted (the guide says "mean cosine").
+31. A session is a distinct `recording_id`; two occurrences of one recording count once.
+32. `accept()` does not check turn consistency: the occurrence in the §3.5 request has
+    no such field, and /v1/embed already marks inconsistent speech unusable (§3.2).
+33. Any band name not in STRONG / PROBABLE / WEAK (NO_MATCH, a typo) is refused as an
+    update band.
+34. profile-eval: the intruder is the next speaker id's first usable video. It is not
+    matched by gender, so it is an easier case than a same-gender intruder.
+
+**Not built in D12** (guide §5.5-5.8, not in the handbook's D12): the analyst weight
+`CFG_SV_MANUAL_WEIGHT`, the drift check `CFG_SV_COHESION_ALERT`, merge, split, removing
+one occurrence. Storing `sum_vec` / `sum_w` with the profile in Qdrant comes with the
+service (D13-D15).
+
+**Open items for the mentor**
+
+23. Cohesion catches one wrong video in three for only 0.6-9.8 % of speakers. So the
+    protection against a wrong occurrence is the STRONG-only update, not cohesion. Is
+    that the intended reading of §5.2, or should promotion also look at the lowest
+    single cosine to the centroid (0.089 in the example above)?
+24. A same-gender intruder would be caught less often than the numbers in 23. Measure
+    it?
