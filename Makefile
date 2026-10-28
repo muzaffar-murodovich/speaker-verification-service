@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm eer-conditions degraded-cohorts degraded-asnorm-scores eer-conditions-asnorm operating-points operating-points-conditions operating-points-table quality quality-eval det det-conditions qdrant store test lint format eval clean
+.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm eer-conditions degraded-cohorts degraded-asnorm-scores eer-conditions-asnorm operating-points operating-points-conditions operating-points-table quality quality-eval profile-eval det det-conditions qdrant store test lint format eval clean
 
 help: ## Show available targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -225,6 +225,11 @@ asnorm_of = $(if $(filter pcm16k,$(1)),$(ASNORM_SCORES),artifacts/scores/voxcele
 
 quality-eval: quality ## EER on the worst and best quality decile, and what the usability gate refuses
 	uv run python -m svs.quality_eval $(foreach c,$(QUALITY_CONDITIONS),$(c)=$(call asnorm_of,$(c))$(comma)artifacts/quality/voxceleb1-$(c).tsv)
+
+videos_of = $(if $(filter pcm16k,$(1)),$(EMB_DIR)-videos,$(COND_DIR)/$(1)/videos)
+
+profile-eval: quality ## Evidence rule on VoxCeleb1 speakers per condition, and cohesion with one wrong video
+	uv run python -m svs.profile_eval $(foreach c,$(QUALITY_CONDITIONS),$(c)=$(call videos_of,$(c))$(comma)artifacts/quality/voxceleb1-$(c).tsv)
 
 DET := artifacts/plots/voxceleb1-det.png
 
