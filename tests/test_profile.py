@@ -15,6 +15,8 @@ from svs.profile import (
     EnrolRuleUnmet,
     Occurrence,
     Profile,
+    UnusableOccurrence,
+    UpdateBandTooLow,
     occurrence_weight,
 )
 
@@ -127,3 +129,28 @@ def test_an_incoherent_profile_is_refused():
     profile = profile_of(*(Occurrence(f"rec_{s}", unit(s), 50, 0.8) for s in (1, 2, 3)))
     assert profile.cohesion < PROMOTE_MIN_COHESION
     assert profile.promotion_missing() == ["cohesion"]
+
+
+def test_only_a_strong_match_moves_the_centroid():
+    profile = profile_of(Occurrence("rec_a", near(1), 70, 0.8))
+    before = profile.centroid.copy()
+    for band in ("PROBABLE", "WEAK", "NO_MATCH"):
+        with pytest.raises(UpdateBandTooLow) as err:
+            profile.update(Occurrence("rec_b", unit(9), 60, 0.8), band)
+        assert err.value.code == "E_SV_UPDATE_BAND_TOO_LOW"
+    np.testing.assert_array_equal(profile.centroid, before)
+    assert profile.sessions == 1
+    profile.update(Occurrence("rec_b", near(2), 60, 0.8), "STRONG")
+    assert profile.sessions == 2
+
+
+@pytest.mark.parametrize(
+    ("seconds", "quality", "code"),
+    [(2.9, 0.8, "E_SV_INSUFFICIENT_SPEECH"), (60, 0.44, "E_SV_LOW_QUALITY")],
+)
+def test_unusable_speech_never_enters(seconds, quality, code):
+    profile = Profile("spk_1")
+    with pytest.raises(UnusableOccurrence) as err:
+        profile.accept(Occurrence("rec_a", near(1), seconds, quality))
+    assert err.value.code == code
+    assert profile.occurrences == [] and profile.sum_w == 0.0
