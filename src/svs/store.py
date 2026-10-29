@@ -18,6 +18,8 @@ from qdrant_client import QdrantClient, models
 from svs.embed import EMBEDDING_DIM, MODEL_VERSION
 
 PROFILE_PREFIX = "spk_profile_"
+# The D13 retrieval benchmark keeps its 152,174 clip vectors apart from real profiles.
+BENCH_PREFIX = "spk_bench_"
 # Handbook D11: m=32, ef_construct=256. The handbook is silent on full_scan_threshold;
 # 20,000 is SVS guide §7.4 (below it a filtered exact scan beats the graph).
 HNSW = models.HnswConfigDiff(m=32, ef_construct=256, full_scan_threshold=20_000)
@@ -28,14 +30,20 @@ PAYLOAD_INDEXES = {
     "last_seen": models.PayloadSchemaType.DATETIME,
     "evidence_seconds": models.PayloadSchemaType.FLOAT,
 }
+# SVS guide §7.4 and §7.7: int8 scalar quantization, kept in RAM, originals kept too.
+INT8 = models.ScalarQuantization(
+    scalar=models.ScalarQuantizationConfig(
+        type=models.ScalarType.INT8, quantile=0.99, always_ram=True
+    )
+)
 
 
 class ModelVersionMismatch(ValueError):
     code = "E_SV_MODEL_VERSION_MISMATCH"
 
 
-def collection_name(model_version: str) -> str:
-    """spk_profile_ + the version, lowercased, every run of other characters as one _.
+def collection_name(model_version: str, prefix: str = PROFILE_PREFIX) -> str:
+    """The prefix (spk_profile_) + the version, lowercased, every run of other characters as one _.
 
     That slug alone would give "ecapa-v3" and "ecapa_v3" one collection, so the first 8
     hex digits of the exact version string's SHA-256 follow it.
@@ -44,7 +52,7 @@ def collection_name(model_version: str) -> str:
     if not slug:
         raise ValueError(f"model version {model_version!r} has no letters or digits")
     digest = hashlib.sha256(model_version.encode()).hexdigest()[:8]
-    return f"{PROFILE_PREFIX}{slug}_{digest}"
+    return f"{prefix}{slug}_{digest}"
 
 
 def point_id(profile_id: str) -> str:
@@ -53,10 +61,12 @@ def point_id(profile_id: str) -> str:
 
 
 class ProfileStore:
-    def __init__(self, client: QdrantClient, model_version: str = MODEL_VERSION) -> None:
+    def __init__(
+        self, client: QdrantClient, model_version: str = MODEL_VERSION, prefix: str = PROFILE_PREFIX
+    ) -> None:
         self.client = client
         self.model_version = model_version
-        self.collection = collection_name(model_version)
+        self.collection = collection_name(model_version, prefix)
 
     def _check_version(self, model_version: str) -> None:
         if model_version != self.model_version:
@@ -64,14 +74,18 @@ class ProfileStore:
                 f"{model_version!r} vector against the {self.model_version!r} collection"
             )
 
-    def create(self) -> None:
-        """Create the collection and its payload indexes. Fails if it already exists."""
-        # Full precision, no quantization: the profile collection is small enough to keep
-        # in memory as float32 (SVS guide §7.2), and decisions use full-precision vectors.
+    def create(self, quantized: bool = False) -> None:
+        """Create the collection and its payload indexes. Fails if it already exists.
+
+        Profiles are full precision by default: the collection is small enough to keep in
+        memory as float32 (SVS guide §7.2). quantized=True adds int8 for the search graph;
+        the float32 originals stay, and decisions are made on them (svs.retrieve).
+        """
         self.client.create_collection(
             self.collection,
             vectors_config=models.VectorParams(size=EMBEDDING_DIM, distance=models.Distance.COSINE),
             hnsw_config=HNSW,
+            quantization_config=INT8 if quantized else None,
         )
         for field, schema in PAYLOAD_INDEXES.items():
             self.client.create_payload_index(self.collection, field, schema)
@@ -79,22 +93,42 @@ class ProfileStore:
     def upsert(
         self, model_version: str, profile_id: str, vector: NDArray[np.float32], payload: dict
     ) -> None:
+        self.upsert_many(model_version, [profile_id], vector[None, :], [payload])
+
+    def upsert_many(
+        self,
+        model_version: str,
+        profile_ids: list[str],
+        vectors: NDArray[np.float32],
+        payloads: list[dict],
+        batch: int = 1024,
+    ) -> None:
         self._check_version(model_version)
-        if vector.shape != (EMBEDDING_DIM,):
-            raise ValueError(f"expected a {EMBEDDING_DIM}-dim vector, got {vector.shape}")
-        missing = PAYLOAD_INDEXES.keys() - payload.keys()
-        if missing:
-            raise ValueError(f"payload lacks {sorted(missing)}")
-        self.client.upsert(
-            self.collection,
-            [
-                models.PointStruct(
-                    id=point_id(profile_id),
-                    vector=vector.tolist(),
-                    payload={**payload, "profile_id": profile_id},
-                )
-            ],
-        )
+        if vectors.shape != (len(profile_ids), EMBEDDING_DIM):
+            raise ValueError(
+                f"expected {len(profile_ids)} {EMBEDDING_DIM}-dim vectors, got {vectors.shape}"
+            )
+        if len(payloads) != len(profile_ids):
+            raise ValueError(f"{len(payloads)} payloads for {len(profile_ids)} profiles")
+        for payload in payloads:
+            missing = PAYLOAD_INDEXES.keys() - payload.keys()
+            if missing:
+                raise ValueError(f"payload lacks {sorted(missing)}")
+        for start in range(0, len(profile_ids), batch):
+            self.client.upsert(
+                self.collection,
+                [
+                    models.PointStruct(
+                        id=point_id(pid), vector=vec.tolist(), payload={**pay, "profile_id": pid}
+                    )
+                    for pid, vec, pay in zip(
+                        profile_ids[start : start + batch],
+                        vectors[start : start + batch],
+                        payloads[start : start + batch],
+                        strict=True,
+                    )
+                ],
+            )
 
     def search(
         self,
@@ -102,6 +136,7 @@ class ProfileStore:
         vector: NDArray[np.float32],
         limit: int,
         query_filter: models.Filter | None = None,
+        params: models.SearchParams | None = None,
     ) -> list[models.ScoredPoint]:
         self._check_version(model_version)
         return self.client.query_points(
@@ -109,8 +144,19 @@ class ProfileStore:
             query=vector.tolist(),
             limit=limit,
             query_filter=query_filter,
+            search_params=params,
             with_payload=True,
+            with_vectors=False,
         ).points
+
+    def vectors(self, point_ids: list[str]) -> NDArray[np.float32]:
+        """The stored float32 vectors of these points, in the order asked."""
+        points = self.client.retrieve(self.collection, point_ids, with_vectors=True)
+        by_id = {str(p.id): p.vector for p in points}
+        missing = [i for i in point_ids if i not in by_id]
+        if missing:
+            raise KeyError(f"{len(missing)} points not in {self.collection}, e.g. {missing[0]}")
+        return np.array([by_id[i] for i in point_ids], np.float32)
 
 
 def main() -> None:

@@ -8,10 +8,12 @@ from qdrant_client import QdrantClient, models
 
 from svs.embed import EMBEDDING_DIM
 from svs.store import (
+    BENCH_PREFIX,
     PAYLOAD_INDEXES,
     ModelVersionMismatch,
     ProfileStore,
     collection_name,
+    point_id,
 )
 
 PAYLOAD = {
@@ -123,3 +125,41 @@ def test_the_server_collection_has_the_handbook_index_settings(server):
     assert info.config.params.vectors.size == EMBEDDING_DIM
     assert info.config.params.vectors.distance == models.Distance.COSINE
     assert {k: v.data_type for k, v in info.payload_schema.items()} == PAYLOAD_INDEXES
+
+
+def test_vectors_come_back_in_the_order_asked(client):
+    store = ProfileStore(client, "v1")
+    store.create()
+    store.upsert_many("v1", ["spk_a", "spk_b"], np.stack([unit(0), unit(1)]), [PAYLOAD] * 2)
+    got = store.vectors([point_id("spk_b"), point_id("spk_a")])
+    np.testing.assert_allclose(got, np.stack([unit(1), unit(0)]), atol=1e-6)
+    with pytest.raises(KeyError):
+        store.vectors([point_id("spk_c")])
+
+
+def test_upsert_many_refuses_another_version_and_short_payloads(client):
+    store = ProfileStore(client, "v1")
+    store.create()
+    with pytest.raises(ModelVersionMismatch):
+        store.upsert_many("v2", ["spk_a"], unit(0)[None, :], [PAYLOAD])
+    with pytest.raises(ValueError, match="payloads"):
+        store.upsert_many("v1", ["spk_a", "spk_b"], np.stack([unit(0), unit(1)]), [PAYLOAD])
+
+
+def test_the_benchmark_prefix_is_a_separate_collection(client):
+    bench = ProfileStore(client, "v1", BENCH_PREFIX).collection
+    assert bench != ProfileStore(client, "v1").collection
+    assert bench.startswith(BENCH_PREFIX)
+
+
+def test_the_quantized_server_collection_is_int8_with_originals(server):
+    client, version = server
+    store = ProfileStore(client, version)
+    store.create(quantized=True)
+    info = client.get_collection(store.collection)
+    scalar = info.config.quantization_config.scalar
+    assert scalar.type == models.ScalarType.INT8
+    assert scalar.always_ram
+    store.upsert(version, "spk_a", unit(0), PAYLOAD)
+    # The original float32 vector is still there for the exact stage.
+    np.testing.assert_allclose(store.vectors([point_id("spk_a")])[0], unit(0), atol=1e-6)
