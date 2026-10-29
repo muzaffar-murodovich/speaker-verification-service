@@ -1331,3 +1331,112 @@ Whole pool (151,174; the only filter that uses the HNSW graph, see below):
     Is M3 a mean or a per-query floor?
 27. Latency is Mac + Docker Desktop VM. The 30 ms exact stage is mostly the vector
     fetch; it should be measured again on the mentor's machine.
+
+## 2026-10-29 — D14: the base-rate problem
+
+Handbook D14: FRR at a fixed FAR as the pool grows from 1 k to 100 k; mandatory filters,
+the pool-size rule, REVIEW_REQUIRED, margin_to_next. SVS guide §4.6, §4.7, §8.4 step 4.
+
+- `svs.calibrate` (5c7af60): STRONG / PROBABLE / WEAK FARs = 0.1 / N, 1 / N, 2 / N for
+  each pool tier N ∈ {1,000, 10,000, 50,000, 100,000}, same 5,000,000 non-targets per
+  bucket. `docs/operating-points.tsv` now has a `pool` column: 384 rows (8 conditions × 4
+  buckets × 4 tiers × 3 bands). The pool-50,000 rows equal the D9 tables exactly (all 8
+  calibration files and the joined table compared with the pool column dropped).
+  `precision_pool50000` → `precision`, computed for the row's own pool. 351 s on the Mac.
+- `svs.bands.band(..., pool)`: thresholds of the smallest tier that holds the pool;
+  above 100,000 the 100,000 tier. The returned row names the tier used.
+- `svs.retrieve.identify` (cbcbf2f) wraps the D13 search (now `two_stage`):
+  1. refuses a call without an `IdentifyFilter` (`E_SV_FILTER_REQUIRED`); source and
+     `last_seen_after` have no default;
+  2. counts the filtered pool in Qdrant (exact count), picks the tier, reports
+     `candidate_pool` and `pool_tier`;
+  3. `decide`: pool > 50,000 → REVIEW_REQUIRED whatever the scores; top below PROBABLE
+     → NO_MATCH; two candidates at PROBABLE or above → REVIEW_REQUIRED; else MATCH;
+  4. every candidate has `margin_to_next` (gap to the next normalised score among the
+     200 rescored; None for the last) and the profile's `evidence_seconds`, `last_seen`.
+  Each rule has a test that fails when the rule is removed (checked once for all four).
+- Pool count latency (Qdrant v1.19.2, Docker on the Mac, 151,174-vector bench
+  collection, 200 calls): whole pool p50 22.6 / p95 23.9 ms; 10 % p95 3.8 ms; 1 % p95
+  2.8 ms. A wide filter adds ~24 ms before the recall stage (p95 9.1 ms in D13).
+
+**Expected false accepts vs pool size** (`make base-rate` → artifacts/base-rate/expected.tsv,
+SHA-256 7364e6bc…; from the operating points alone). Clean 3-10 s:
+
+| pool | fixed pool-1,000 STRONG threshold 5.4092: false accepts / query | FRR | pool's own STRONG threshold | false accepts / query | FRR |
+|---|---|---|---|---|---|
+| 1,000 | 0.10 | 16.16 % | 5.4092 | 0.100 | 16.16 % |
+| 10,000 | 1.00 | 16.16 % | 6.3400 | 0.100 | 27.85 % |
+| 50,000 | 5.00 | 16.16 % | 6.6948 | 0.100 | 33.30 % |
+| 100,000 | 10.00 | 16.16 % | 7.3682 | 0.080 | 45.55 % |
+
+Same shape in every condition and bucket. G.729 3-10 s: FRR 56.93 % → 89.34 %; clean
+30-120 s: 3.53 % → 17.91 %. The 100,000 STRONG thresholds rest on 4 false accepts
+(> 120 s: 1), so they are rough.
+
+**Measured in 1:N searches** (`make base-rate` → artifacts/base-rate/voxceleb1-pcm16k.tsv,
+SHA-256 5dda3a40…, identical on 2 runs, 14 s, 1.8 GB; experiments.csv d14-base-rate-*).
+2,000 clean 3-10 s query clips from 250 held-out speakers (seed 0); pools are nested
+prefixes of 100,000 clips of the other 1,001 speakers. Unknown speaker = the pool alone;
+known speaker = one clip of the query's speaker from another session added.
+
+| policy | pool | STRONG FA / query | N × FAR (same-gender share) | FRR at STRONG | known: right MATCH / wrong MATCH / REVIEW | unknown: MATCH STRONG / PROBABLE / REVIEW |
+|---|---|---|---|---|---|---|
+| fixed | 1,000 | 0.046 | 0.100 (0.051) | 19.65 % | 59.00 / 1.35 / 33.20 % | 2.45 / 20.85 / 11.25 % |
+| fixed | 10,000 | 0.495 | 1.000 (0.513) | 19.65 % | 12.20 / 1.65 / 84.15 % | 0.45 / 13.85 / 71.50 % |
+| fixed | 50,000 | 2.631 | 5.000 (2.567) | 19.65 % | 2.50 / 0.45 / 96.20 % | 0.25 / 3.25 / 93.15 % |
+| fixed | 100,000 | 5.151 | 10.000 (5.134) | 19.65 % | 1.75 / 0.30 / 97.30 % | 0.10 / 1.65 / 95.85 % |
+| pool rule | 10,000 | 0.061 | 0.100 (0.051) | 33.50 % | 59.50 / 2.15 / 22.30 % | 0.90 / 13.35 / 10.20 % |
+| pool rule | 50,000 | 0.155 | 0.100 (0.051) | 39.30 % | 54.50 / 2.15 / 18.30 % | 1.20 / 9.25 / 10.00 % |
+| pool rule | 100,000 | 0.075 | 0.080 (0.041) | 51.15 % | 52.65 / 2.15 / 16.25 % | 0.45 / 7.95 / 10.00 % |
+
+(pool rule at 1,000 = fixed at 1,000.) The 100,000 rows show what the bands alone would
+do: the service answers REVIEW_REQUIRED there.
+
+- With a fixed threshold the false accepts per query grow linearly with N and match
+  N × FAR over the same-gender part of the pool (0.046 vs 0.051 … 5.151 vs 5.134):
+  calibration non-targets are same-gender only, cross-gender pairs almost never pass.
+- The pool-size rule keeps them near or below 0.1 per query. The cost is FRR at STRONG:
+  19.65 % → 51.15 %. "Filter first" is what buys this back: a filter that leaves 1,000
+  profiles keeps the 1,000 thresholds.
+- Pool rule, 50,000: 0.155 measured vs 0.051 expected; the 310 false accepts come from
+  102 speaker pairs. Clips stand in for profiles (≈ 100 clips per pool speaker), so one
+  look-alike speaker brings many clips. Real profiles are one per person.
+- With fixed thresholds wrong MATCH stays low only because the two-assignable rule turns
+  96-97 % of queries into REVIEW_REQUIRED: safe, but useless.
+- PROBABLE is the weak spot: its FAR is 1 / N, so about 0.5 same-gender impostors per
+  query reach it, and an unknown speaker is assigned at PROBABLE in 8-21 % of queries.
+- Measured FRR (19.65 % at pool 1,000) is above the trial-list FRR (16.16 %): different
+  targets (2,000 random cross-session clip pairs vs 50,000 trial-list targets).
+
+**Choices where the handbook and the SVS guide are silent** (the mentor may disagree):
+
+41. Pool tiers 1,000 / 10,000 / 50,000 / 100,000 (handbook D14 range plus
+    `CFG_SV_MAX_AUTO_POOL`); the tier is the smallest that holds the pool, so a pool
+    between tiers gets the stricter thresholds.
+42. All three bands scale with N (0.1 / N, 1 / N, 2 / N), as D9 did for N = 50,000.
+43. `IdentifyFilter`: source and `last_seen_after` required, status defaults to
+    CONFIRMED + PROVISIONAL, `min_evidence_seconds` to 0. Missing filter →
+    `E_SV_FILTER_REQUIRED`, a code not in guide §3.8.
+44. Two candidates at PROBABLE or above → REVIEW_REQUIRED. This is the threshold on
+    margin_to_next the guide asks for (pitfall 18) without a number: the guide's
+    `CFG_SV_MERGE_MARGIN` 0.08 is on another score scale than our AS-Norm scores.
+45. Top candidate PROBABLE → MATCH (identity assigned, flagged by its band, §4.5); WEAK →
+    NO_MATCH with the candidates listed (new profile, §6.1).
+46. The pool is counted with an exact Qdrant count before the search.
+47. The measurement uses numpy brute force, not Qdrant: D13 showed the two-stage search
+    makes the same decision as brute force (1000 / 1000).
+
+**Not done:** §4.7 best occurrence and query time range (no occurrence store yet);
+service endpoints (D15).
+
+**Open items for the mentor**
+
+28. PROBABLE at FAR 10 × STRONG assigns an unknown speaker in 8-21 % of queries. Should
+    PROBABLE assignments need a smaller pool, or should PROBABLE be 0.1 × N_expected
+    too with STRONG stricter?
+29. Pool-size rule FRR at STRONG reaches 51 % at 100,000 (clean 3-10 s). Is a STRONG
+    recall of about half acceptable for wide searches, or should the service refuse
+    to auto-assign above 10,000 instead of 50,000?
+30. The exact pool count costs 24 ms p95 on the whole 151,174 pool. An approximate count
+    would be cheaper, but the tier then rests on an estimate. Which?
+31. A numeric margin threshold (choice 44) needs duplicate-profile data: internal data.
