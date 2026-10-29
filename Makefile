@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm eer-conditions degraded-cohorts degraded-asnorm-scores eer-conditions-asnorm operating-points operating-points-conditions operating-points-table quality quality-eval profile-eval det det-conditions qdrant store retrieval-bench test lint format eval clean
+.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm eer-conditions degraded-cohorts degraded-asnorm-scores eer-conditions-asnorm operating-points operating-points-conditions operating-points-table quality quality-eval profile-eval det det-conditions qdrant store retrieval-bench base-rate test lint format eval clean
 
 help: ## Show available targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -251,6 +251,10 @@ store: qdrant ## Create the profile collection for the current model version
 # D13: 151,174 clip vectors in Qdrant (float32 and int8), 1,000 held-out queries.
 retrieval-bench: qdrant ## Recall@200 and stage latency of two-stage identify vs brute force (~12 min)
 	uv run python -m svs.retrieve_bench $(EMB_DIR) $(COHORT).npz
+
+# D14: no Qdrant needed; D13 showed two-stage identify decides as brute force does.
+base-rate: ## False accepts and decisions per identify query as the pool grows, 1,000 to 100,000
+	uv run python -m svs.base_rate $(EMB_DIR) $(META) $(DUPLICATES) $(COHORT).npz artifacts/base-rate
 
 test: $(G729) ## Run the test suite
 	uv run pytest
