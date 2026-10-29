@@ -1260,3 +1260,74 @@ service (D13-D15).
     single cosine to the centroid (0.089 in the example above)?
 24. A same-gender intruder would be caught less often than the numbers in 23. Measure
     it?
+
+## 2026-10-29 — D13: two-stage retrieval, recall@200 against brute force
+
+- `svs.store` (ae6e3bd): optional int8 scalar quantization (quantile 0.99, in RAM, float32
+  originals kept; SVS guide §7.4, §7.7), batch upsert, search parameters, and `vectors()`
+  to fetch the stored float32 vectors by point id.
+- `svs.retrieve.identify` (9e7854e), as in handbook D13 and guide §7.5:
+  1. recall: Qdrant returns k × 3.0 = 600 candidates (`CFG_SV_OVERSAMPLING`), no vectors,
+     Qdrant's own rescore off;
+  2. exact: fetch the 600 float32 vectors, cosine against the query in float64, keep the
+     200 best, AS-Norm (query stats against the cohort now, profile stats from the
+     payload), band from `docs/operating-points.tsv`.
+  No Qdrant score reaches a candidate. Test: a store that reverses stage 1 and makes up
+  its scores still gives the right top profile and the exact cosine; with the Qdrant
+  score used instead, the test fails (checked once).
+- `make retrieval-bench` (1dd6c13, rows d13-recall-* in experiments.csv): pool = every
+  VoxCeleb1 clip with an embedding minus 1,000 query clips held out at random (seed 0):
+  151,174 vectors. Payload random (seed 0): 10 sources, last_seen over 365 days. Filters
+  keep the whole pool, 10 %, 1 % and 0.1 % (Appendix D bands). Ground truth = brute
+  force top-200 with the same filter. Mac M3, Qdrant v1.19.2 in Docker Desktop.
+
+Whole pool (151,174; the only filter that uses the HNSW graph, see below):
+
+| vectors | hnsw_ef | recall@200 mean | min | queries < 0.99 | same decision | recall ms p50 / p95 | exact ms p50 / p95 |
+|---|---|---|---|---|---|---|---|
+| float32 | 128 | 0.9995 | 0.980 | 4 / 1000 | 1000 / 1000 | 8.1 / 9.1 | 30.4 / 31.7 |
+| float32 | 256 | 0.9996 | 0.980 | 3 / 1000 | 1000 / 1000 | 8.0 / 8.5 | 30.5 / 31.8 |
+| int8 | 128 | 0.9996 | 0.970 | 4 / 1000 | 1000 / 1000 | 6.9 / 7.6 | 30.5 / 31.8 |
+| int8 | 256 | 0.9996 | 0.975 | 3 / 1000 | 1000 / 1000 | 6.9 / 7.2 | 30.6 / 31.8 |
+
+- "Same decision" = top candidate and its band equal to brute force followed by the
+  same exact stage (Appendix D's last criterion). 1000 / 1000 in all 16 runs.
+- Filters 10 % (15,225), 1 % (1,514), 0.1 % (160): recall@200 1.0000 for every query
+  in all configurations. Not a property of the graph: `full_scan_threshold` is in
+  kilobytes (qdrant-client field description; 1 KB = one 256-dim float32 vector), so
+  20,000 KB is about 26,667 of our 192-dim vectors. Every filtered pool here is smaller,
+  so Qdrant scans the filtered points and the graph is not used.
+- Latency split (M3): recall stage p95 ≤ 9.1 ms, exact stage p95 ≤ 31.9 ms; guide budgets
+  40 / 60 ms. The exact stage is almost all fetching 600 vectors from Qdrant: 28.7 ms
+  median over REST, 30.7 ms over gRPC; query cohort stats 0.8 ms, 200 bands 0.08 ms
+  (30 probe queries on the int8 collection). 20 untimed warm-up queries per run: the
+  first ones were slower in a 20-query trial.
+- Upload and index: 23-25 s per collection. Collection status GREEN with 148,480 /
+  151,174 indexed (float32): the smallest segment stays a plain segment.
+
+**Choices where the handbook and the SVS guide are silent** (the mentor may disagree):
+
+35. Benchmark vectors are VoxCeleb1 clip embeddings, not profiles: 1,251 speakers give
+    only 1,251 profiles, and M3 needs ≥ 100,000 vectors. Real model vectors, synthetic
+    payload. Clips of the query's speaker stay in the pool, as the speaker's other
+    profiles would.
+36. int8 only in the `spk_bench_` collections; the profile collection stays full
+    precision (guide §7.2, D11 choice 28). Both measured; recall is the same here.
+37. `hnsw_ef` 256 for identify (`CFG_SV_HNSW_EF_SEARCH_UI`, interactive). 128 measured too.
+38. The exact stage rescores all 600 and keeps the 200 best exact cosines, then AS-Norm.
+    The guide's §3.4 example says `rescored: 200`; here 600 are rescored. Qdrant's own
+    rescore is off so the decision maths stays in our code.
+39. Each profile's top-300 cohort mean and spread live in its payload (`cohort_mu`,
+    `cohort_sd`), computed when the vector is written.
+40. recall@200 is per query, against brute force with the same filter; M3's ≥ 0.99 is
+    read as the mean over 1,000 queries.
+
+**Open items for the mentor**
+
+25. Filtered graph search is not measured: at 151,174 vectors every filter ≤ 10 % is
+    below `full_scan_threshold`. Production pools are larger (§7.3). Measure it with a
+    lower threshold on this pool, or wait for internal data volumes?
+26. M3 ≥ 0.99: the mean is 0.9996 but 3 of 1,000 queries are below 0.99 (lowest 0.975).
+    Is M3 a mean or a per-query floor?
+27. Latency is Mac + Docker Desktop VM. The 30 ms exact stage is mostly the vector
+    fetch; it should be measured again on the mentor's machine.
