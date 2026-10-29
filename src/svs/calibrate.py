@@ -1,7 +1,8 @@
 """Operating points: the STRONG, PROBABLE and WEAK thresholds of each bucket, at a fixed FAR.
 
 SVS guide §8.4: STRONG at the FAR where N_expected x FAR <= 0.1, PROBABLE at 10 x that FAR,
-WEAK (the floor) for a review workload people will do.
+WEAK (the floor) for a review workload people will do. N is the candidate pool size, so
+each bucket gets one set of thresholds per pool tier (§4.6); svs.bands picks the tier.
 """
 
 import argparse
@@ -18,16 +19,23 @@ from svs.trial_list import SOURCES
 from svs.trials import BUCKETS, nontarget_pairs
 from svs.voxceleb import read_genders, utterances
 
-POOL_SIZE = 50_000  # CFG_SV_MAX_AUTO_POOL: the largest pool the service assigns from (§4.6).
-STRONG_FAR = 0.1 / POOL_SIZE  # 2e-6
-PROBABLE_FAR = 10 * STRONG_FAR  # 2e-5
-# The floor adds one impostor candidate per query for a person to review (LOG choice 21).
-WEAK_FAR = PROBABLE_FAR + 1 / POOL_SIZE  # 4e-5
-BANDS = {"WEAK": WEAK_FAR, "PROBABLE": PROBABLE_FAR, "STRONG": STRONG_FAR}
-# Per bucket: about 10 false accepts at STRONG_FAR, so the threshold rests on more than one trial.
+MAX_AUTO_POOL = 50_000  # CFG_SV_MAX_AUTO_POOL: the largest pool the service assigns from (§4.6).
+# Handbook D14: pools from 1 k to 100 k. Above MAX_AUTO_POOL the bands are still given, but
+# no automatic decision (svs.retrieve).
+POOL_TIERS = (1_000, 10_000, MAX_AUTO_POOL, 100_000)
+# Per bucket: about 10 false accepts at STRONG for pool 50,000, so the threshold rests on more
+# than one trial; pool 100,000 STRONG rests on about 5 (LOG, D14).
 N_NONTARGET = 5_000_000
 # Pairs scored at once: two 250,000 x 192 float64 gathers are 0.8 GB (the home PC has 7 GB).
 BATCH = 250_000
+
+
+def band_fars(pool: int) -> dict[str, float]:
+    """FAR of each band for a pool of this size, floor first. Pool 50,000: 4e-5, 2e-5, 2e-6."""
+    strong = 0.1 / pool
+    probable = 10 * strong
+    # The floor adds one impostor candidate per query for a person to review (LOG choice 21).
+    return {"WEAK": probable + 1 / pool, "PROBABLE": probable, "STRONG": strong}
 
 
 def threshold_at_far(target: NDArray, nontarget: NDArray, far: float) -> tuple[float, int, float]:
@@ -45,7 +53,7 @@ def threshold_at_far(target: NDArray, nontarget: NDArray, far: float) -> tuple[f
     return float(thresholds[i]), round(false_alarm[i] * len(nontarget)), float(miss[i])
 
 
-def precision(recall: float, far: float, pool: int = POOL_SIZE) -> float:
+def precision(recall: float, far: float, pool: int) -> float:
     """Share of accepts that are right, for one query against a pool holding its speaker.
 
     The true profile passes with probability recall; each of the other pool members with
@@ -91,7 +99,9 @@ if __name__ == "__main__":
         for bucket in (b for b in BUCKETS if SOURCES[b] == source):
             i, j = nontarget_pairs(utts, N_NONTARGET, bucket)
             nontarget = pair_scores(x, mu, sd, i, j)
-            for band, far in BANDS.items():
+            for pool, band, far in (
+                (p, b, f) for p in POOL_TIERS for b, f in band_fars(p).items()
+            ):
                 threshold, false_accepts, frr = threshold_at_far(targets[bucket], nontarget, far)
                 # Trustworthy if the false accepts come from many speaker pairs, not one.
                 accepted = nontarget >= threshold
@@ -102,6 +112,7 @@ if __name__ == "__main__":
                     {
                         "condition": args.condition,
                         "bucket": bucket,
+                        "pool": pool,
                         "band": band,
                         "far": f"{far:g}",
                         "threshold": f"{threshold:.4f}",
@@ -111,7 +122,7 @@ if __name__ == "__main__":
                         "frr_%": f"{100 * frr:.2f}",
                         "n_target": len(targets[bucket]),
                         "recall": f"{1 - frr:.4f}",
-                        f"precision_pool{POOL_SIZE}": f"{precision(1 - frr, measured_far):.3f}",
+                        "precision": f"{precision(1 - frr, measured_far, pool):.3f}",
                     }
                 )
                 print("\t".join(map(str, rows[-1].values())))

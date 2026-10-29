@@ -2,14 +2,15 @@
 
 Joins each condition's AS-Norm EER on the trial list with its thresholds, recall and
 precision from svs.calibrate, and names the model and cohort behind the scores: a new
-model or cohort is a new table (SVS guide §8.4 step 6).
+model or cohort is a new table (SVS guide §8.4 step 6). Each bucket has one set of bands
+per pool tier (svs.calibrate.POOL_TIERS).
 """
 
 import argparse
 import csv
 from pathlib import Path
 
-from svs.calibrate import POOL_SIZE, precision
+from svs.calibrate import precision
 from svs.cohort import COHORT_VERSION
 from svs.embed import MODEL_VERSION
 from svs.metrics import P_TARGET, eer, min_dcf, read_bucket_scores
@@ -23,7 +24,7 @@ def cohort_of(condition: str) -> str:
     return COHORT_VERSION if condition == CLEAN else f"{COHORT_VERSION}-{condition}"
 
 
-def band_precision(row: dict, above: dict | None) -> float:
+def band_precision(row: dict, above: dict | None, pool: int) -> float:
     """Precision of the scores in this band only: above its threshold, below the next one.
 
     Recall and false accepts of the band are those at its threshold minus those at the
@@ -33,11 +34,11 @@ def band_precision(row: dict, above: dict | None) -> float:
         return float(row["precision"])
     d_recall = float(row["recall"]) - float(above["recall"])
     d_far = (int(row["false_accepts"]) - int(above["false_accepts"])) / int(row["n_nontarget"])
-    return precision(d_recall, d_far)
+    return precision(d_recall, d_far, pool)
 
 
 def table_rows(condition: str, scores_tsv: str, points_tsv: str) -> list[dict]:
-    """The rows of one condition, STRONG, PROBABLE, WEAK within each bucket."""
+    """The rows of one condition, STRONG, PROBABLE, WEAK within each bucket and pool tier."""
     eers = {
         bucket: (eer(t, n)[0], min_dcf(t, n)[0], len(t), len(n))
         for bucket, (t, n) in read_bucket_scores(scores_tsv).items()
@@ -46,36 +47,41 @@ def table_rows(condition: str, scores_tsv: str, points_tsv: str) -> list[dict]:
         points = list(csv.DictReader(f, delimiter="\t"))
     if {p["condition"] for p in points} != {condition}:
         raise ValueError(f"{points_tsv} is not the table of {condition}")
+    pools = sorted({int(p["pool"]) for p in points})
     rows = []
     for bucket, (rate, cost, n_target, n_nontarget) in eers.items():
-        by_band = {p["band"]: p for p in points if p["bucket"] == bucket}
-        above = None
-        for band in BAND_ORDER:
-            p = dict(by_band[band], precision=by_band[band][f"precision_pool{POOL_SIZE}"])
-            rows.append(
-                {
-                    "model": MODEL_VERSION,
-                    "cohort": cohort_of(condition),
-                    "condition": condition,
-                    "bucket": bucket,
-                    "band": band,
-                    "threshold": p["threshold"],
-                    "far": p["far"],
-                    "false_accepts": p["false_accepts"],
-                    "speaker_pairs": p["speaker_pairs"],
-                    "n_nontarget": p["n_nontarget"],
-                    "n_target": p["n_target"],
-                    "recall": p["recall"],
-                    f"precision_pool{POOL_SIZE}": p["precision"],
-                    f"band_precision_pool{POOL_SIZE}": f"{band_precision(p, above):.3f}",
-                    "eer_%": f"{100 * rate:.3f}",
-                    # Equal costs (svs.metrics C_MISS, C_FA); the prior is in the name.
-                    f"mindcf_p{P_TARGET}": f"{cost:.4f}",
-                    "eer_n_target": n_target,
-                    "eer_n_nontarget": n_nontarget,
-                }
-            )
-            above = p
+        for pool in pools:
+            by_band = {
+                p["band"]: p for p in points if p["bucket"] == bucket and int(p["pool"]) == pool
+            }
+            above = None
+            for band in BAND_ORDER:
+                p = by_band[band]
+                rows.append(
+                    {
+                        "model": MODEL_VERSION,
+                        "cohort": cohort_of(condition),
+                        "condition": condition,
+                        "bucket": bucket,
+                        "pool": pool,
+                        "band": band,
+                        "threshold": p["threshold"],
+                        "far": p["far"],
+                        "false_accepts": p["false_accepts"],
+                        "speaker_pairs": p["speaker_pairs"],
+                        "n_nontarget": p["n_nontarget"],
+                        "n_target": p["n_target"],
+                        "recall": p["recall"],
+                        "precision": p["precision"],
+                        "band_precision": f"{band_precision(p, above, pool):.3f}",
+                        "eer_%": f"{100 * rate:.3f}",
+                        # Equal costs (svs.metrics C_MISS, C_FA); the prior is in the name.
+                        f"mindcf_p{P_TARGET}": f"{cost:.4f}",
+                        "eer_n_target": n_target,
+                        "eer_n_nontarget": n_nontarget,
+                    }
+                )
+                above = p
     return rows
 
 

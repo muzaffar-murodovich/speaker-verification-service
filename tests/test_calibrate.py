@@ -4,26 +4,24 @@ import numpy as np
 import pytest
 
 from svs.asnorm import as_norm
-from svs.calibrate import (
-    POOL_SIZE,
-    PROBABLE_FAR,
-    STRONG_FAR,
-    WEAK_FAR,
-    pair_scores,
-    precision,
-    threshold_at_far,
-)
+from svs.calibrate import band_fars, pair_scores, precision, threshold_at_far
 
 NONTARGET = np.arange(1, 11) / 10  # 0.1, 0.2, ..., 1.0
 TARGET = np.array([0.85, 0.95])
 
 
-def test_strong_far_follows_the_pool_size_rule():
+@pytest.mark.parametrize("pool", [1_000, 50_000, 100_000])
+def test_strong_far_follows_the_pool_size_rule(pool):
+    fars = band_fars(pool)
     # SVS guide §8.4: N_expected x FAR <= 0.1 for STRONG, PROBABLE at 10 x that FAR.
-    assert POOL_SIZE * STRONG_FAR == pytest.approx(0.1)
-    assert PROBABLE_FAR == pytest.approx(10 * STRONG_FAR)
+    assert pool * fars["STRONG"] == pytest.approx(0.1)
+    assert fars["PROBABLE"] == pytest.approx(10 * fars["STRONG"])
     # WEAK adds one impostor candidate per query to PROBABLE's.
-    assert POOL_SIZE * (WEAK_FAR - PROBABLE_FAR) == pytest.approx(1)
+    assert pool * (fars["WEAK"] - fars["PROBABLE"]) == pytest.approx(1)
+
+
+def test_pool_50000_keeps_the_d9_fars():
+    assert [f"{far:g}" for far in band_fars(50_000).values()] == ["4e-05", "2e-05", "2e-06"]
 
 
 def test_threshold_at_far_allows_at_most_far_false_accepts():
@@ -52,4 +50,4 @@ def test_precision_counts_false_accepts_over_the_whole_pool():
     # Pool of 1,000 with FAR 1e-3: 0.8 expected true accepts against 1.0 false.
     assert precision(0.8, 1e-3, pool=1_000) == pytest.approx(0.8 / 1.8)
     # The STRONG rule leaves 0.1 false accepts per query, so precision stays below 1 / 1.1.
-    assert precision(1.0, STRONG_FAR) == pytest.approx(1 / 1.1)
+    assert precision(1.0, band_fars(50_000)["STRONG"], 50_000) == pytest.approx(1 / 1.1)
