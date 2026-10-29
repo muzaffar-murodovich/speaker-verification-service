@@ -6,9 +6,10 @@ at random with a fixed seed. The filters then keep a known share of the pool: al
 1 % and 0.1 %, the selectivity bands of SVS guide Appendix D.
 
 Two collections hold the same vectors: float32 only, and int8 for the search graph with
-the float32 originals kept. Each query runs through svs.retrieve.identify and through
+the float32 originals kept. Each query runs through svs.retrieve.two_stage and through
 brute force with the same filter; the exact stage after brute force decides the same
-way, so the two decisions can be compared (Appendix D's last criterion).
+way, so the two decisions can be compared (Appendix D's last criterion). Bands use the
+pool-50,000 thresholds for every filter, so only retrieval differs between filters.
 """
 
 import argparse
@@ -22,8 +23,9 @@ from qdrant_client import QdrantClient, models
 from svs.asnorm import as_norm, cohort_stats
 from svs.bands import NO_MATCH, read_table
 from svs.bands import band as band_of
+from svs.calibrate import MAX_AUTO_POOL
 from svs.embed import MODEL_VERSION
-from svs.retrieve import RECALL_K, brute_force, identify, recall_at_k
+from svs.retrieve import RECALL_K, brute_force, recall_at_k, two_stage
 from svs.store import BENCH_PREFIX, ProfileStore, point_id
 
 SOURCES = [f"cc_{i:02d}" for i in range(10)]
@@ -117,7 +119,7 @@ def exact_decision(raw, mu_q, sd_q, mu, sd, seconds, condition, table):
     """Top profile row and band from exact cosines, as the exact stage decides."""
     norm = as_norm(raw, mu_q, sd_q, mu, sd)
     j = int(np.argmax(norm))
-    return j, band_of(float(norm[j]), seconds, condition, table)[0]
+    return j, band_of(float(norm[j]), seconds, condition, table, MAX_AUTO_POOL)[0]
 
 
 def main() -> None:
@@ -171,7 +173,7 @@ def main() -> None:
             for ef in (128, 256):
 
                 def run(q, store=store, ef=ef, qfilter=qfilter):
-                    return identify(
+                    return two_stage(
                         store,
                         MODEL_VERSION,
                         q_vecs[q],
@@ -179,6 +181,7 @@ def main() -> None:
                         "pcm16k",
                         cohort,
                         table,
+                        MAX_AUTO_POOL,
                         qfilter,
                         ef=ef,
                     )

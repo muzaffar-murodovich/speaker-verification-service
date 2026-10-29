@@ -149,6 +149,11 @@ class ProfileStore:
             with_vectors=False,
         ).points
 
+    def count(self, model_version: str, query_filter: models.Filter | None) -> int:
+        """Exact number of profiles the filter keeps: the candidate pool (SVS guide §4.6)."""
+        self._check_version(model_version)
+        return self.client.count(self.collection, count_filter=query_filter, exact=True).count
+
     def vectors(self, point_ids: list[str]) -> NDArray[np.float32]:
         """The stored float32 vectors of these points, in the order asked."""
         points = self.client.retrieve(self.collection, point_ids, with_vectors=True)
