@@ -9,6 +9,7 @@ from svs.api import CODED, CONDITIONS, ERRORS, Services, create_app, encode_embe
 from svs.asnorm import as_norm, cohort_stats
 from svs.bands import read_table
 from svs.embed import EMBEDDING_DIM, MODEL_VERSION
+from svs.profile import Occurrence, Profile
 from svs.quality import unusable_reason
 from svs.store import ProfileStore
 
@@ -281,3 +282,154 @@ def test_min_band_shortens_the_list_but_not_the_decision(api, profiles):
     assert len(everything["candidates"]) == 5
     assert [c["band"] for c in strong_only["candidates"]] == ["STRONG"]
     assert strong_only["decision"] == everything["decision"] == "MATCH"
+
+
+def occurrence(vector, audio_id, seconds=61.9, quality=0.78, speaker_ref="S1"):
+    return {
+        "audio_id": audio_id,
+        "speaker_ref": speaker_ref,
+        "embedding": encode_embedding(vector),
+        "net_speech_seconds": seconds,
+        "quality": quality,
+    }
+
+
+def enrol(api, occ, key=None, **extra):
+    body = {"model_version": MODEL_VERSION, "occurrence": occ, "source": "cc_north", **extra}
+    headers = {"Idempotency-Key": key} if key else {}
+    return api.post("/v1/profiles", json=body, headers=headers)
+
+
+def patch(api, profile_id, occ, band="STRONG", key=None):
+    body = {"model_version": MODEL_VERSION, "occurrence": occ, "matched_band": band}
+    headers = {"Idempotency-Key": key} if key else {}
+    return api.patch(f"/v1/profiles/{profile_id}", json=body, headers=headers)
+
+
+def stored(services) -> int:
+    return services.store.client.count(services.store.collection).count
+
+
+def near(vector, scale=0.02):
+    """Another recording of the same voice: the vector plus a little noise."""
+    x = vector + scale * RNG.standard_normal(EMBEDDING_DIM).astype(np.float32)
+    return x / np.linalg.norm(x)
+
+
+def test_enrol_creates_a_provisional_profile_and_names_what_is_missing(api, services):
+    response = enrol(api, occurrence(unit(1)[0], "aud_1"))
+    assert response.status_code == 201
+    out = response.json()
+    assert out["status"] == "PROVISIONAL"
+    assert out["sessions"] == 1
+    assert out["promotion_rule"]["met"] is False
+    assert set(out["promotion_rule"]["missing"]) == {"evidence_seconds", "sessions"}
+    assert out["request_id"].startswith("req_")
+    assert stored(services) == 1
+
+
+def test_enrol_as_confirmed_is_refused_and_writes_nothing(api, services):
+    response = enrol(api, occurrence(unit(1)[0], "aud_1", seconds=300.0), status="CONFIRMED")
+    assert response.status_code == 422
+    assert response.json()["error"] == "E_SV_ENROL_RULE_UNMET"
+    assert stored(services) == 0
+
+
+@pytest.mark.parametrize(
+    ("seconds", "quality", "code"),
+    [(2.0, 0.9, "E_SV_INSUFFICIENT_SPEECH"), (60.0, 0.3, "E_SV_LOW_QUALITY")],
+)
+def test_enrol_refuses_unusable_speech(api, services, seconds, quality, code):
+    response = enrol(api, occurrence(unit(1)[0], "aud_1", seconds, quality))
+    assert response.json()["error"] == code
+    assert stored(services) == 0
+
+
+def test_update_below_strong_is_refused_and_changes_nothing(api, services):
+    voice = unit(1)[0]
+    profile_id = enrol(api, occurrence(voice, "aud_1")).json()["profile_id"]
+    before = services.store.get(MODEL_VERSION, profile_id)
+    response = patch(api, profile_id, occurrence(near(voice), "aud_2"), band="PROBABLE")
+    assert response.status_code == 422
+    assert response.json()["error"] == "E_SV_UPDATE_BAND_TOO_LOW"
+    after = services.store.get(MODEL_VERSION, profile_id)
+    assert np.array_equal(before[0], after[0])
+    assert before[1]["sum_w"] == after[1]["sum_w"]
+
+
+def test_a_strong_update_from_a_second_recording_promotes(api, services):
+    voice = unit(1)[0]
+    first, second = near(voice), near(voice)
+    profile_id = enrol(api, occurrence(first, "aud_1")).json()["profile_id"]
+    out = patch(api, profile_id, occurrence(second, "aud_2")).json()
+    assert out["promoted"] is True
+    assert out["status"] == "CONFIRMED"
+    assert out["sessions"] == 2
+    # The stored centroid is the one svs.profile computes from the same two occurrences.
+    local = Profile(profile_id)
+    local.accept(Occurrence("aud_1", first, 61.9, 0.78))
+    local.accept(Occurrence("aud_2", second, 61.9, 0.78))
+    vector, payload = services.store.get(MODEL_VERSION, profile_id)
+    assert np.allclose(vector, local.centroid, atol=1e-6)
+    assert payload["sum_w"] == pytest.approx(local.sum_w)
+
+
+def test_the_same_occurrence_twice_is_refused(api):
+    voice = unit(1)[0]
+    profile_id = enrol(api, occurrence(voice, "aud_1")).json()["profile_id"]
+    response = patch(api, profile_id, occurrence(near(voice), "aud_1"))
+    assert response.status_code == 409
+    assert response.json()["error"] == "E_SV_DUPLICATE_OCCURRENCE"
+
+
+def test_update_of_an_unknown_profile_is_404(api):
+    response = patch(api, "spk_none", occurrence(unit(1)[0], "aud_1"))
+    assert response.json()["error"] == "E_SV_PROFILE_NOT_FOUND"
+
+
+def test_an_enrol_retry_with_the_same_key_creates_one_profile(api, services):
+    occ = occurrence(unit(1)[0], "aud_1")
+    first = enrol(api, occ, key="idem_1")
+    retry = enrol(api, occ, key="idem_1")
+    assert retry.status_code == 201
+    assert retry.json() == first.json()
+    assert retry.headers["Idempotent-Replayed"] == "true"
+    assert stored(services) == 1
+    # Without a key, the same body is a second enrolment.
+    enrol(api, occ)
+    assert stored(services) == 2
+
+
+def test_an_update_retry_with_the_same_key_counts_the_speech_once(api, services):
+    voice = unit(1)[0]
+    profile_id = enrol(api, occurrence(voice, "aud_1")).json()["profile_id"]
+    occ = occurrence(near(voice), "aud_2")
+    first = patch(api, profile_id, occ, key="idem_2")
+    retry = patch(api, profile_id, occ, key="idem_2")
+    assert retry.status_code == 200
+    assert retry.json() == first.json()
+    assert services.store.get(MODEL_VERSION, profile_id)[1]["evidence_seconds"] == 2 * 61.9
+
+
+def test_a_key_reused_for_another_body_is_refused(api, services):
+    enrol(api, occurrence(unit(1)[0], "aud_1"), key="idem_3")
+    response = enrol(api, occurrence(unit(1)[0], "aud_9"), key="idem_3")
+    assert response.status_code == 409
+    assert response.json()["error"] == "E_SV_IDEMPOTENCY_KEY_REUSED"
+    assert stored(services) == 1
+
+
+def test_a_failed_call_does_not_use_up_its_key(api, services):
+    occ = occurrence(unit(1)[0], "aud_1")
+    assert enrol(api, occ, key="idem_4", status="CONFIRMED").status_code == 422
+    assert enrol(api, occ, key="idem_4", status="CONFIRMED").status_code == 422
+    assert stored(services) == 0
+
+
+def test_an_enrolled_profile_is_found_by_identify_and_verify(api):
+    voice = unit(1)[0]
+    profile_id = enrol(api, occurrence(voice, "aud_1")).json()["profile_id"]
+    found = identify(api, near(voice)).json()
+    assert found["candidates"][0]["profile_id"] == profile_id
+    checked = verify(api, side(near(voice), 12.0), {"profile_id": profile_id}).json()
+    assert checked["band"] == "STRONG"

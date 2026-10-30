@@ -8,12 +8,16 @@ their arguments, and their results and exceptions back into JSON.
 
 import base64
 import binascii
+import hashlib
+import json
+import threading
 import uuid
+from collections import OrderedDict
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 
 import numpy as np
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from numpy.typing import NDArray
@@ -22,8 +26,21 @@ from pydantic import BaseModel, Field
 from svs.asnorm import cohort_stats
 from svs.bands import NO_MATCH, band
 from svs.embed import EMBEDDING_DIM, MODEL_VERSION
-from svs.optable import BAND_ORDER
-from svs.profile import EnrolRuleUnmet, UnusableOccurrence, UpdateBandTooLow
+from svs.optable import BAND_ORDER, CLEAN
+from svs.profile import (
+    CONFIRMED,
+    MIN_UPDATE_BAND,
+    PROMOTE_MIN_COHESION,
+    PROMOTE_MIN_QUALITY,
+    PROMOTE_MIN_SECONDS,
+    PROMOTE_MIN_SESSIONS,
+    PROVISIONAL,
+    EnrolRuleUnmet,
+    Occurrence,
+    Profile,
+    UnusableOccurrence,
+    UpdateBandTooLow,
+)
 from svs.retrieve import RECALL_K, TOP_K, FilterRequired, IdentifyFilter, identify
 from svs.store import ModelVersionMismatch, ProfileStore
 from svs.trials import MIN_SPEECH_SECONDS, duration_bucket
@@ -43,6 +60,8 @@ ERRORS = {
     # Not in §3.8 (LOG, D15).
     "E_SV_FILTER_REQUIRED": (422, "after change"),
     "E_SV_INVALID_REQUEST": (422, "after change"),
+    "E_SV_IDEMPOTENCY_KEY_REUSED": (409, "no"),
+    "E_SV_DUPLICATE_OCCURRENCE": (409, "no"),
 }
 
 
@@ -77,6 +96,22 @@ CONDITIONS = {
 VERIFY_POOL = 1
 # A unit vector's norm, up to float32 rounding after base64 and back.
 NORM_TOLERANCE = 1e-3
+# Idempotency keys remembered; the oldest is forgotten first (LOG, D15).
+IDEMPOTENCY_KEYS = 10_000
+
+
+class Idempotency:
+    """Responses of mutating calls by Idempotency-Key, in this process's memory.
+
+    The lock is held for the whole call, so a retry that arrives while the first try is
+    still running waits for it and gets its response. It also serialises every write, so
+    two updates of one profile cannot read the same sum_vec and lose one of the two.
+    """
+
+    def __init__(self, size: int = IDEMPOTENCY_KEYS) -> None:
+        self.lock = threading.Lock()
+        self.size = size
+        self.done: OrderedDict[str, tuple[str, int, dict]] = OrderedDict()
 
 
 @dataclass
@@ -86,6 +121,7 @@ class Services:
     store: ProfileStore | None = None
     table: dict = field(default_factory=dict)  # svs.bands.read_table
     cohorts: dict[str, NDArray] = field(default_factory=dict)  # condition -> cohort embeddings
+    idempotency: Idempotency = field(default_factory=Idempotency)
 
 
 class Condition(BaseModel):
@@ -126,6 +162,32 @@ class IdentifyRequest(BaseModel):
     top_k: int = Field(TOP_K, ge=1, le=RECALL_K)
     min_band: str = "WEAK"  # the lowest band listed among the candidates
     condition: Condition | None = None
+
+
+class OccurrenceIn(BaseModel):
+    """One speaker in one recording, as /v1/embed returned it (§3.5)."""
+
+    audio_id: str
+    speaker_ref: str
+    embedding: str
+    net_speech_seconds: float
+    quality: float = Field(ge=0.0, le=1.0)
+
+
+class EnrolRequest(BaseModel):
+    model_version: str
+    occurrence: OccurrenceIn
+    # Where the audio came from: the identify filter needs it (handbook D11 payload).
+    source: str
+    status: str = PROVISIONAL
+    attributes: dict = {}
+
+
+class UpdateRequest(BaseModel):
+    model_version: str
+    occurrence: OccurrenceIn
+    matched_band: str
+    source: str | None = None
 
 
 def decode_embedding(text: str) -> NDArray[np.float32]:
@@ -327,6 +389,160 @@ def identify_one(services: Services, req: IdentifyRequest) -> dict:
     }
 
 
+def occurrence_of(occ: OccurrenceIn) -> Occurrence:
+    """A session is a recording: audio_id is the Occurrence's recording_id (§5.2)."""
+    return Occurrence(
+        occ.audio_id, decode_embedding(occ.embedding), occ.net_speech_seconds, occ.quality
+    )
+
+
+def promotion_rule(profile: Profile) -> dict:
+    missing = profile.promotion_missing()
+    return {
+        "min_evidence_seconds": PROMOTE_MIN_SECONDS,
+        "min_sessions": PROMOTE_MIN_SESSIONS,
+        "min_mean_quality": PROMOTE_MIN_QUALITY,
+        "min_cohesion": PROMOTE_MIN_COHESION,
+        "met": not missing,
+        "missing": missing,
+    }
+
+
+def summary(profile: Profile) -> dict:
+    return {
+        "profile_id": profile.profile_id,
+        "status": profile.status,
+        "evidence_seconds": profile.evidence_seconds,
+        "sessions": profile.sessions,
+        "promotion_rule": promotion_rule(profile),
+    }
+
+
+def save_profile(services: Services, profile: Profile, payload: dict) -> None:
+    """Write the centroid and everything needed to update it exactly later (Appendix B).
+
+    sum_vec and sum_w are stored, not only the centroid, so an update adds to the same
+    sums. The occurrences are kept for sessions and cohesion. The cohort statistics are
+    those of the clean cohort, cached here for every later verify and identify (§4.3).
+    """
+    (mu,), (sd,) = cohort_stats(profile.centroid[None, :], services.cohorts[CLEAN])
+    payload = {
+        **payload,
+        "status": profile.status,
+        "last_seen": datetime.now(UTC).isoformat(),
+        "evidence_seconds": profile.evidence_seconds,
+        "sessions": profile.sessions,
+        "cohesion": profile.cohesion,
+        "cohort_mu": float(mu),
+        "cohort_sd": float(sd),
+        "sum_vec": base64.b64encode(profile.sum_vec.astype("<f8").tobytes()).decode(),
+        "sum_w": profile.sum_w,
+    }
+    store_of(services).upsert(MODEL_VERSION, profile.profile_id, profile.centroid, payload)
+
+
+def load_profile(services: Services, profile_id: str) -> tuple[Profile, dict]:
+    found = store_of(services).get(MODEL_VERSION, profile_id)
+    if found is None:
+        raise ServiceError("E_SV_PROFILE_NOT_FOUND", f"no profile {profile_id!r}")
+    _, payload = found
+    occurrences = [
+        Occurrence(
+            o["audio_id"], decode_embedding(o["embedding"]), o["net_speech_seconds"], o["quality"]
+        )
+        for o in payload["occurrences"]
+    ]
+    profile = Profile(
+        profile_id,
+        np.frombuffer(base64.b64decode(payload["sum_vec"]), "<f8").copy(),
+        payload["sum_w"],
+        payload["status"],
+        occurrences,
+    )
+    return profile, payload
+
+
+def enrol(services: Services, req: EnrolRequest) -> dict:
+    """A new profile from one occurrence (§3.5); PROVISIONAL unless the rule already holds.
+
+    Asking for CONFIRMED runs the evidence rule: one occurrence is one session, so the
+    request is refused with E_SV_ENROL_RULE_UNMET and nothing is written.
+    """
+    check_version(req.model_version)
+    if req.status not in (PROVISIONAL, CONFIRMED):
+        raise ServiceError("E_SV_INVALID_REQUEST", f"status {req.status!r}")
+    profile = Profile(f"spk_{uuid.uuid4().hex}")
+    profile.accept(occurrence_of(req.occurrence))
+    if req.status == CONFIRMED:
+        profile.promote()
+    now = datetime.now(UTC).isoformat()
+    payload = {
+        "source": [req.source],
+        "first_seen": now,
+        "attributes": req.attributes,
+        "occurrences": [req.occurrence.model_dump()],
+    }
+    save_profile(services, profile, payload)
+    return summary(profile)
+
+
+def update(services: Services, profile_id: str, req: UpdateRequest) -> dict:
+    """Add a matched occurrence to a profile (§3.6), only at STRONG, then try promotion.
+
+    The same speaker of the same recording is refused a second time: its seconds would
+    count twice towards the 120 s of the evidence rule.
+    """
+    check_version(req.model_version)
+    profile, payload = load_profile(services, profile_id)
+    key = (req.occurrence.audio_id, req.occurrence.speaker_ref)
+    if key in {(o["audio_id"], o["speaker_ref"]) for o in payload["occurrences"]}:
+        raise ServiceError(
+            "E_SV_DUPLICATE_OCCURRENCE", f"{key[0]}:{key[1]} is already in {profile_id}"
+        )
+    profile.update(occurrence_of(req.occurrence), req.matched_band)
+    promoted = profile.status == PROVISIONAL and not profile.promotion_missing()
+    if promoted:
+        profile.promote()
+    sources = payload["source"]
+    if req.source is not None and req.source not in sources:
+        sources = [*sources, req.source]
+    payload = {
+        **payload,
+        "source": sources,
+        "occurrences": [*payload["occurrences"], req.occurrence.model_dump()],
+    }
+    save_profile(services, profile, payload)
+    return {**summary(profile), "promoted": promoted, "min_update_band": MIN_UPDATE_BAND}
+
+
+def idempotent(
+    services: Services, request: Request, key: str | None, status: int, run
+) -> JSONResponse:
+    """Run a mutating call once per Idempotency-Key (§3.1).
+
+    A retry with the same key and body gets the first response again, request_id
+    included, and nothing is written twice. The same key with another body is refused.
+    An error is not remembered: the caller can fix the request and retry with the key.
+    """
+    cache = services.idempotency
+    with cache.lock:
+        if key is None:
+            return reply(request, run(), status)
+        fingerprint = f"{request.method} {request.url.path} {request.state.body_hash}"
+        if key in cache.done:
+            seen, seen_status, seen_body = cache.done[key]
+            if seen != fingerprint:
+                raise ServiceError(
+                    "E_SV_IDEMPOTENCY_KEY_REUSED", f"key {key!r} was used for another request"
+                )
+            return JSONResponse(seen_body, seen_status, headers={"Idempotent-Replayed": "true"})
+        response = reply(request, run(), status)
+        cache.done[key] = (fingerprint, status, json.loads(response.body))
+        if len(cache.done) > cache.size:
+            cache.done.popitem(last=False)
+        return response
+
+
 def create_app(services: Services) -> FastAPI:
     app = FastAPI(title="Speaker verification service", version=MODEL_VERSION)
     app.state.svs = services
@@ -334,6 +550,8 @@ def create_app(services: Services) -> FastAPI:
     @app.middleware("http")
     async def request_id(request: Request, call_next):
         request.state.request_id = f"req_{uuid.uuid4().hex}"
+        # The idempotency fingerprint: the raw body, before any parsing (Starlette caches it).
+        request.state.body_hash = hashlib.sha256(await request.body()).hexdigest()
         response = await call_next(request)
         # A header too, so a response this file did not build (an unknown path) has one.
         response.headers["X-Request-ID"] = request.state.request_id
@@ -359,6 +577,25 @@ def create_app(services: Services) -> FastAPI:
     @app.post("/v1/identify")
     def identify_endpoint(request: Request, body: IdentifyRequest) -> JSONResponse:
         return reply(request, identify_one(services, body))
+
+    @app.post("/v1/profiles")
+    def enrol_endpoint(
+        request: Request,
+        body: EnrolRequest,
+        idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    ) -> JSONResponse:
+        return idempotent(services, request, idempotency_key, 201, lambda: enrol(services, body))
+
+    @app.patch("/v1/profiles/{profile_id}")
+    def update_endpoint(
+        request: Request,
+        profile_id: str,
+        body: UpdateRequest,
+        idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    ) -> JSONResponse:
+        return idempotent(
+            services, request, idempotency_key, 200, lambda: update(services, profile_id, body)
+        )
 
     @app.post("/v1/verify")
     def verify_endpoint(request: Request, body: VerifyRequest) -> JSONResponse:
