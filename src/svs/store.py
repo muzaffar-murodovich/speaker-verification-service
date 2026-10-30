@@ -154,6 +154,16 @@ class ProfileStore:
         self._check_version(model_version)
         return self.client.count(self.collection, count_filter=query_filter, exact=True).count
 
+    def get(self, model_version: str, profile_id: str) -> tuple[NDArray[np.float32], dict] | None:
+        """One profile's stored vector and payload, or None if it is not in the collection."""
+        self._check_version(model_version)
+        points = self.client.retrieve(
+            self.collection, [point_id(profile_id)], with_payload=True, with_vectors=True
+        )
+        if not points:
+            return None
+        return np.array(points[0].vector, np.float32), points[0].payload
+
     def vectors(self, point_ids: list[str]) -> NDArray[np.float32]:
         """The stored float32 vectors of these points, in the order asked."""
         points = self.client.retrieve(self.collection, point_ids, with_vectors=True)

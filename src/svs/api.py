@@ -6,17 +6,25 @@ person. The scoring logic lives in the other svs modules; this file only turns J
 their arguments, and their results and exceptions back into JSON.
 """
 
+import base64
+import binascii
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+import numpy as np
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from numpy.typing import NDArray
+from pydantic import BaseModel
 
-from svs.embed import MODEL_VERSION
+from svs.asnorm import cohort_stats
+from svs.bands import band, tier_rows
+from svs.embed import EMBEDDING_DIM, MODEL_VERSION
 from svs.profile import EnrolRuleUnmet, UnusableOccurrence, UpdateBandTooLow
 from svs.retrieve import FilterRequired
-from svs.store import ModelVersionMismatch
+from svs.store import ModelVersionMismatch, ProfileStore
+from svs.trials import MIN_SPEECH_SECONDS, duration_bucket
 
 # §3.8: each code's HTTP status and whether the same call can succeed later.
 ERRORS = {
@@ -53,9 +61,183 @@ CODED = (
 )
 
 
+# The (codec, sample rate) of a request's condition block (§3.3) -> the condition name of
+# the operating-point table (svs.degrade). The noise conditions have no codec to name them.
+CONDITIONS = {
+    ("pcm", 16000): "pcm16k",
+    ("pcm", 8000): "pcm8k",
+    ("g711a", 8000): "g711a",
+    ("g711u", 8000): "g711u",
+    ("g729", 8000): "g729",
+    ("opus", 16000): "opus",
+}
+# A 1:1 claim compares the audio with one profile: the smallest pool tier applies (LOG, D15).
+VERIFY_POOL = 1
+# A unit vector's norm, up to float32 rounding after base64 and back.
+NORM_TOLERANCE = 1e-3
+
+
 @dataclass
 class Services:
     """What the endpoints work with; tests build it with fakes."""
+
+    store: ProfileStore | None = None
+    table: dict = field(default_factory=dict)  # svs.bands.read_table
+    cohorts: dict[str, NDArray] = field(default_factory=dict)  # condition -> cohort embeddings
+
+
+class Condition(BaseModel):
+    codec: str
+    sample_rate: int
+
+
+class Side(BaseModel):
+    """One side of a verify call: an embedding with its net speech, or a stored profile."""
+
+    embedding: str | None = None
+    net_speech_seconds: float | None = None
+    profile_id: str | None = None
+
+
+class VerifyRequest(BaseModel):
+    model_version: str
+    left: Side
+    right: Side
+    condition: Condition | None = None
+
+
+def decode_embedding(text: str) -> NDArray[np.float32]:
+    """Base64 little-endian float32[192] (§3.1), checked to be finite and unit length.
+
+    Embeddings are normalised when produced and never at query time (§4.1): a vector that
+    is not unit length was made by something else, and is refused rather than repaired.
+    """
+    try:
+        raw = base64.b64decode(text, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ServiceError("E_SV_INVALID_REQUEST", f"embedding is not base64: {exc}") from exc
+    if len(raw) != 4 * EMBEDDING_DIM:
+        raise ServiceError(
+            "E_SV_INVALID_REQUEST", f"embedding has {len(raw)} bytes, not {4 * EMBEDDING_DIM}"
+        )
+    vector = np.frombuffer(raw, "<f4").astype(np.float32)
+    if not np.isfinite(vector).all() or abs(np.linalg.norm(vector) - 1) > NORM_TOLERANCE:
+        raise ServiceError("E_SV_INVALID_REQUEST", "embedding is not a finite unit vector")
+    return vector
+
+
+def encode_embedding(vector: NDArray) -> str:
+    return base64.b64encode(np.asarray(vector, "<f4").tobytes()).decode()
+
+
+def check_version(model_version: str) -> None:
+    if model_version != MODEL_VERSION:
+        raise ModelVersionMismatch(f"{model_version!r} request to the {MODEL_VERSION!r} service")
+
+
+def check_speech(seconds: float) -> None:
+    """Below 3.0 s of net speech the service refuses to score (handbook M2)."""
+    if not seconds >= MIN_SPEECH_SECONDS:
+        raise ServiceError(
+            "E_SV_INSUFFICIENT_SPEECH", f"{seconds} s of speech, {MIN_SPEECH_SECONDS} s needed"
+        )
+
+
+def resolve_condition(
+    condition: Condition | None, seconds: float, table: dict, pool: int
+) -> tuple[str, list[str]]:
+    """The table's condition name for the request, and any warning to return with it.
+
+    Without a condition block the call gets the condition whose STRONG threshold is the
+    highest for this bucket and pool: the most conservative one (§3.3).
+    """
+    if condition is not None:
+        name = CONDITIONS.get((condition.codec.lower(), condition.sample_rate))
+        if name is None or (name, duration_bucket(seconds)) not in table:
+            raise ServiceError(
+                "E_SV_UNKNOWN_CONDITION",
+                f"codec {condition.codec!r} at {condition.sample_rate} Hz is not calibrated",
+            )
+        return name, []
+    bucket = duration_bucket(seconds)
+    names = [name for name, b in table if b == bucket]
+    name = max(names, key=lambda c: float(tier_rows(seconds, c, table, pool)[0]["threshold"]))
+    return name, [f"no condition given: thresholds of {name}, the most conservative"]
+
+
+def operating_point(row: dict) -> dict:
+    """The operating-point table row behind a band (handbook M2: bands traceable to rows)."""
+    return {
+        "name": f"{row['condition']}_{row['bucket']}_pool{row['pool']}_{row['band']}",
+        "condition": row["condition"],
+        "bucket": row["bucket"],
+        "pool": int(row["pool"]),
+        "far": float(row["far"]),
+        "recall": float(row["recall"]),
+        "precision": float(row["precision"]),
+        "eer": float(row["eer_%"]) / 100,
+        "trials": int(row["n_target"]) + int(row["n_nontarget"]),
+        "cohort": row["cohort"],
+    }
+
+
+def store_of(services: Services) -> ProfileStore:
+    if services.store is None:
+        raise ServiceError("E_SV_STORE_UNAVAILABLE", "no vector store configured")
+    return services.store
+
+
+def profile_side(services: Services, profile_id: str) -> tuple[NDArray, float, float, float]:
+    """A stored profile's centroid, evidence seconds and cached cohort mean and spread."""
+    found = store_of(services).get(MODEL_VERSION, profile_id)
+    if found is None:
+        raise ServiceError("E_SV_PROFILE_NOT_FOUND", f"no profile {profile_id!r}")
+    vector, payload = found
+    return vector, payload["evidence_seconds"], payload["cohort_mu"], payload["cohort_sd"]
+
+
+def verify(services: Services, req: VerifyRequest) -> dict:
+    """1:1 (§3.3): the raw cosine, its AS-Norm score, the band and the row behind it.
+
+    The bucket is that of the shorter side, as in the trial list (svs.trials). Each
+    embedding side is normalised with the condition's cohort; a profile side uses the
+    statistics cached in its payload when it was written (§4.3).
+    """
+    check_version(req.model_version)
+    if req.left.embedding is None or req.left.net_speech_seconds is None:
+        raise ServiceError("E_SV_INVALID_REQUEST", "left needs embedding and net_speech_seconds")
+    left = decode_embedding(req.left.embedding)
+    if req.right.profile_id is not None:
+        right, right_seconds, mu_r, sd_r = profile_side(services, req.right.profile_id)
+    elif req.right.embedding is not None and req.right.net_speech_seconds is not None:
+        right, right_seconds = decode_embedding(req.right.embedding), req.right.net_speech_seconds
+        mu_r = sd_r = None
+    else:
+        raise ServiceError(
+            "E_SV_INVALID_REQUEST", "right needs a profile_id, or embedding and net_speech_seconds"
+        )
+    seconds = min(req.left.net_speech_seconds, right_seconds)
+    check_speech(seconds)
+    name, warnings = resolve_condition(req.condition, seconds, services.table, VERIFY_POOL)
+    cohort = services.cohorts[name]
+    (mu_l,), (sd_l,) = cohort_stats(left[None, :], cohort)
+    if mu_r is None:
+        (mu_r,), (sd_r,) = cohort_stats(right[None, :], cohort)
+    raw = float(left.astype(np.float64) @ right.astype(np.float64))
+    # svs.asnorm.as_norm, with the two z-scores kept for the explanation.
+    z_left = (raw - mu_l) / (sd_l + 1e-6)
+    z_right = (raw - mu_r) / (sd_r + 1e-6)
+    score = 0.5 * (z_left + z_right)
+    name_of_band, row = band(score, seconds, name, services.table, VERIFY_POOL)
+    return {
+        "raw_score": raw,
+        "normalised_score": score,
+        "band": name_of_band,
+        "threshold_used": float(row["threshold"]),
+        "operating_point": operating_point(row),
+        "explain": {"cohort_size": len(cohort), "z_left": z_left, "z_right": z_right},
+        "warnings": warnings,
+    }
 
 
 def reply(request: Request, body: dict, status: int = 200) -> JSONResponse:
@@ -97,5 +279,9 @@ def create_app(services: Services) -> FastAPI:
     @app.get("/v1/healthz")
     def healthz(request: Request) -> JSONResponse:
         return reply(request, {"status": "ok"})
+
+    @app.post("/v1/verify")
+    def verify_endpoint(request: Request, body: VerifyRequest) -> JSONResponse:
+        return reply(request, verify(services, body))
 
     return app
