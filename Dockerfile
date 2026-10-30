@@ -1,5 +1,5 @@
-# The service image (handbook D15, M3). The model and the cohorts are not in the image:
-# docker-compose.yml mounts them from artifacts/ (make model, make cohort).
+# The service image (handbook D15, M3). The model is not in the image: docker-compose.yml
+# mounts it from artifacts/models (make model).
 FROM python:3.12.13-slim-bookworm
 COPY --from=ghcr.io/astral-sh/uv:0.11.14 /uv /bin/uv
 
@@ -11,6 +11,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY src ./src
 RUN uv sync --frozen --no-dev
 COPY docs/operating-points.tsv docs/operating-points.tsv
+COPY cohorts/*.npz cohorts/
 
 ENV PATH=/app/.venv/bin:$PATH
 EXPOSE 8000

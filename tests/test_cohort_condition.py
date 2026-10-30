@@ -1,5 +1,8 @@
 """The cohort under a condition: same members, degraded audio, short ones left out."""
 
+import hashlib
+from pathlib import Path
+
 import numpy as np
 import pytest
 import soundfile as sf
@@ -63,3 +66,22 @@ def test_members_come_from_the_committed_list():
     members = read_members("cohorts/voxceleb2-dev-v1.tsv")
     assert len(members) == 5000
     assert members[0] == "dev/aac/id08731/oV3yhiKgpe4/00119.m4a"
+
+
+def test_committed_cohort_files_are_the_ones_recorded():
+    """The service reads cohorts/*.npz (svs.api); a changed file changes every score."""
+    for line in Path("cohorts/cohorts.sha256").read_text().splitlines():
+        digest, name = line.split()
+        assert hashlib.sha256(Path("cohorts", name).read_bytes()).hexdigest() == digest, name
+
+
+def test_each_committed_cohort_keeps_the_list_order():
+    """A degraded cohort may drop members left under 3.0 s, never add or reorder them."""
+    members = read_members("cohorts/voxceleb2-dev-v1.tsv")
+    position = {m: i for i, m in enumerate(members)}
+    for path in sorted(Path("cohorts").glob("*.npz")):
+        with np.load(path) as z:
+            kept = [position[m] for m in z["members"]]
+            assert kept == sorted(kept), path
+            assert z["embeddings"].shape == (len(kept), EMBEDDING_DIM)
+            assert len(kept) > 0.98 * len(members), path

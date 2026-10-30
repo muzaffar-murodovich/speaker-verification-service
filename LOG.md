@@ -1515,12 +1515,20 @@ every response, the error codes of SVS guide §3.8. SVS guide §3.1-3.8.
 **Open items for the mentor**
 
 32. M3 asks for `docker compose up` on the mentor's machine. The model (`make model`,
-    25 MB, checksum) downloads from a clean clone; the eight cohorts (37 MB) need
-    VoxCeleb1 + VoxCeleb2 and, for the codecs, the home PC. Commit the cohort files, or
-    hand them over separately?
+    25 MB, checksum) downloads from a clean clone. The eight cohorts needed VoxCeleb1 +
+    VoxCeleb2 and the home PC to rebuild, so they are now committed (see below).
+    `make smoke` still reads three VoxCeleb1 clips from data/; without VoxCeleb1, embed
+    needs any other WAV under data/.
 33. Profile-side statistics against the clean cohort (choice 53) are not measured on
     degraded queries: D7 normalised both sides with the condition's cohort.
 34. Idempotency keys are lost on restart and not shared between workers. A real
     deployment needs them in a shared store. Which one does SVS use?
 35. Not built: §3.7 endpoints (GET profile, operating-points, model-info, readyz),
     `E_SV_INDEX_BUILDING`, the `coverage` note and `searched.filtered_out` of §3.4.
+
+**2026-10-30, later — cohorts committed** (user's decision on item 32). The eight cohort
+files (35 MB, the same bytes as artifacts/cohort/ that D7-D14 used) are in `cohorts/`
+with `cohorts/cohorts.sha256`; the image copies them, so `make service` needs only
+`make model`. Tests: each file matches its recorded SHA-256, and each keeps the committed
+list's members in order (degraded cohorts drop the 2-67 members left under 3.0 s).
+`make smoke` after the change: the same scores as before (9.89 STRONG, −5.00 NO_MATCH).

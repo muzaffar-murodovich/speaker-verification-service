@@ -1,8 +1,10 @@
-# The build needs only pyproject.toml, uv.lock, README.md, src/ and the operating points.
+# The build needs only pyproject.toml, uv.lock, README.md, src/, the operating points and
+# the cohort embeddings.
 *
 !pyproject.toml
 !uv.lock
 !README.md
 !src/
 !docs/operating-points.tsv
+!cohorts/*.npz
 **/__pycache__

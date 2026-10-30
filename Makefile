@@ -245,7 +245,7 @@ qdrant: ## Start Qdrant in Docker (docker-compose.yml), wait until it answers
 	docker compose up -d qdrant
 	until curl -sf localhost:6333/ > /dev/null; do sleep 1; done
 
-service: ## Build and start Qdrant + the API (docker-compose.yml), wait until it answers on :8000
+service: $(MODEL) ## Build and start Qdrant + the API (docker-compose.yml), wait until it answers on :8000
 	docker compose up -d --build
 	until curl -sf localhost:8000/v1/healthz > /dev/null; do sleep 1; done
 

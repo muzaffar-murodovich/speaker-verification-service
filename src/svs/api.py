@@ -630,7 +630,8 @@ def idempotent(
         return response
 
 
-COHORT_DIR = Path("artifacts/cohort")
+# The committed cohort embeddings (cohorts/cohorts.sha256), one file per condition.
+COHORT_DIR = Path("cohorts")
 # Seconds the service waits for Qdrant at start, e.g. while docker compose starts both.
 STORE_WAIT = 60
 

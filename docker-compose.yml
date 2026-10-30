@@ -15,9 +15,8 @@ services:
       CFG_SV_QDRANT_URL: http://qdrant:6333
       CFG_SV_AUDIO_ROOT: /app/data
     volumes:
-      # Built on the host (make model, make cohort); read-only in the container.
+      # Downloaded on the host (make model); read-only in the container.
       - ./artifacts/models:/app/artifacts/models:ro
-      - ./artifacts/cohort:/app/artifacts/cohort:ro
       # /v1/embed reads audio_uri paths under here, e.g. voxceleb1/wav/id10001/....wav
       - ./data:/app/data:ro
     depends_on:
