@@ -99,9 +99,7 @@ if __name__ == "__main__":
         for bucket in (b for b in BUCKETS if SOURCES[b] == source):
             i, j = nontarget_pairs(utts, N_NONTARGET, bucket)
             nontarget = pair_scores(x, mu, sd, i, j)
-            for pool, band, far in (
-                (p, b, f) for p in POOL_TIERS for b, f in band_fars(p).items()
-            ):
+            for pool, band, far in ((p, b, f) for p in POOL_TIERS for b, f in band_fars(p).items()):
                 threshold, false_accepts, frr = threshold_at_far(targets[bucket], nontarget, far)
                 # Trustworthy if the false accepts come from many speaker pairs, not one.
                 accepted = nontarget >= threshold
