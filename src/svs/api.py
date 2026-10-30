@@ -10,11 +10,14 @@ import base64
 import binascii
 import hashlib
 import json
+import math
 import threading
 import uuid
 from collections import OrderedDict
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import Literal
 
 import numpy as np
 from fastapi import FastAPI, Header, Request
@@ -25,7 +28,8 @@ from pydantic import BaseModel, Field
 
 from svs.asnorm import cohort_stats
 from svs.bands import NO_MATCH, band
-from svs.embed import EMBEDDING_DIM, MODEL_VERSION
+from svs.embed import EMBEDDING_DIM, MODEL_VERSION, Embedder
+from svs.extract import load_audio, speech_from_samples
 from svs.optable import BAND_ORDER, CLEAN
 from svs.profile import (
     CONFIRMED,
@@ -41,6 +45,7 @@ from svs.profile import (
     UnusableOccurrence,
     UpdateBandTooLow,
 )
+from svs.quality import quality, quality_detail, turn_consistency, unusable_reason
 from svs.retrieve import RECALL_K, TOP_K, FilterRequired, IdentifyFilter, identify
 from svs.store import ModelVersionMismatch, ProfileStore
 from svs.trials import MIN_SPEECH_SECONDS, duration_bucket
@@ -96,6 +101,8 @@ CONDITIONS = {
 VERIFY_POOL = 1
 # A unit vector's norm, up to float32 rounding after base64 and back.
 NORM_TOLERANCE = 1e-3
+# Items per /v1/embed call: the batch size of SVS guide §3.1.
+MAX_EMBED_ITEMS = 256
 # Idempotency keys remembered; the oldest is forgotten first (LOG, D15).
 IDEMPOTENCY_KEYS = 10_000
 
@@ -122,6 +129,8 @@ class Services:
     table: dict = field(default_factory=dict)  # svs.bands.read_table
     cohorts: dict[str, NDArray] = field(default_factory=dict)  # condition -> cohort embeddings
     idempotency: Idempotency = field(default_factory=Idempotency)
+    embedder: Embedder | None = None
+    audio_root: Path | None = None  # CFG_SV_AUDIO_ROOT: audio_uri paths are inside it
 
 
 class Condition(BaseModel):
@@ -162,6 +171,19 @@ class IdentifyRequest(BaseModel):
     top_k: int = Field(TOP_K, ge=1, le=RECALL_K)
     min_band: str = "WEAK"  # the lowest band listed among the candidates
     condition: Condition | None = None
+
+
+class EmbedItem(BaseModel):
+    id: str
+    audio_uri: str  # a path relative to CFG_SV_AUDIO_ROOT
+    segments: list[tuple[float, float]]  # milliseconds, [start, end)
+    channel: int | None = None  # zero-based; None only for mono audio
+    purpose: Literal["TURN", "OCCURRENCE"]
+
+
+class EmbedRequest(BaseModel):
+    model_version: str
+    items: list[EmbedItem] = Field(min_length=1, max_length=MAX_EMBED_ITEMS)
 
 
 class OccurrenceIn(BaseModel):
@@ -389,6 +411,67 @@ def identify_one(services: Services, req: IdentifyRequest) -> dict:
     }
 
 
+def audio_path(root: Path | None, uri: str) -> Path:
+    """The file an audio_uri names. Paths that leave the audio root are refused."""
+    if root is None:
+        raise ServiceError("E_SV_INVALID_REQUEST", "this service has no audio root")
+    path = (root / uri).resolve()
+    if root.resolve() not in path.parents or not path.is_file():
+        raise ServiceError("E_SV_INVALID_REQUEST", f"no audio file {uri!r} under the audio root")
+    return path
+
+
+def embed_item(embedder: Embedder, root: Path | None, item: EmbedItem) -> dict:
+    """One speaker's segments of one recording -> embedding, net speech and quality (§3.2).
+
+    Each segment is a turn. Turns with 3.0 s of speech or more get their own embedding,
+    and their mean pairwise cosine is the turn consistency, as in svs.quality_cache.
+    Under 3.0 s of pooled speech there is no embedding: the result says why.
+    """
+    try:
+        audio, rate = load_audio(audio_path(root, item.audio_uri), item.channel)
+        pooled = speech_from_samples(audio, rate, item.segments)
+        turns = [speech_from_samples(audio, rate, [segment]) for segment in item.segments]
+    except ValueError as exc:  # bad segments, channel or audio, as svs.extract words it
+        raise ServiceError("E_SV_INVALID_REQUEST", f"item {item.id}: {exc}") from exc
+    turn_embeddings = [
+        embedder.embed(t.samples) for t in turns if t.net_speech_seconds >= MIN_SPEECH_SECONDS
+    ]
+    consistency = turn_consistency(turn_embeddings)
+    # The selected segments at their own rate, cut as svs.extract cuts them: quality looks
+    # at the audio as it arrived.
+    selected = np.concatenate(
+        [audio[math.ceil(a * rate / 1000) : math.ceil(b * rate / 1000)] for a, b in item.segments]
+    )
+    detail = quality_detail(selected, rate, pooled, consistency)
+    score = quality(**detail)
+    seconds = pooled.net_speech_seconds
+    reason = unusable_reason(seconds, score, consistency)
+    result = {
+        "id": item.id,
+        "purpose": item.purpose,
+        "embedding": (
+            encode_embedding(embedder.embed(pooled.samples))
+            if seconds >= MIN_SPEECH_SECONDS
+            else None
+        ),
+        "net_speech_seconds": seconds,
+        "quality": score,
+        "quality_detail": detail,
+        "usable": reason is None,
+    }
+    if reason is not None:
+        result["unusable_reason"] = reason
+    return result
+
+
+def embed(services: Services, req: EmbedRequest) -> dict:
+    check_version(req.model_version)
+    if services.embedder is None:
+        raise RuntimeError("the service was started without the embedding model")
+    return {"results": [embed_item(services.embedder, services.audio_root, i) for i in req.items]}
+
+
 def occurrence_of(occ: OccurrenceIn) -> Occurrence:
     """A session is a recording: audio_id is the Occurrence's recording_id (§5.2)."""
     return Occurrence(
@@ -573,6 +656,10 @@ def create_app(services: Services) -> FastAPI:
     @app.get("/v1/healthz")
     def healthz(request: Request) -> JSONResponse:
         return reply(request, {"status": "ok"})
+
+    @app.post("/v1/embed")
+    def embed_endpoint(request: Request, body: EmbedRequest) -> JSONResponse:
+        return reply(request, embed(services, body))
 
     @app.post("/v1/identify")
     def identify_endpoint(request: Request, body: IdentifyRequest) -> JSONResponse:

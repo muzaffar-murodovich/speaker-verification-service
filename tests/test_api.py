@@ -2,18 +2,28 @@
 
 import numpy as np
 import pytest
+import soundfile as sf
 from fastapi.testclient import TestClient
 from qdrant_client import QdrantClient
 
-from svs.api import CODED, CONDITIONS, ERRORS, Services, create_app, encode_embedding
+from svs.api import (
+    CODED,
+    CONDITIONS,
+    ERRORS,
+    Services,
+    create_app,
+    decode_embedding,
+    encode_embedding,
+)
 from svs.asnorm import as_norm, cohort_stats
 from svs.bands import read_table
-from svs.embed import EMBEDDING_DIM, MODEL_VERSION
+from svs.embed import EMBEDDING_DIM, MODEL_PATH, MODEL_VERSION, Embedder
 from svs.profile import Occurrence, Profile
-from svs.quality import unusable_reason
+from svs.quality import quality, unusable_reason
 from svs.store import ProfileStore
 
 RNG = np.random.default_rng(0)
+needs_model = pytest.mark.skipif(not MODEL_PATH.exists(), reason="run `make model` first")
 
 
 def unit(n: int) -> np.ndarray:
@@ -433,3 +443,87 @@ def test_an_enrolled_profile_is_found_by_identify_and_verify(api):
     assert found["candidates"][0]["profile_id"] == profile_id
     checked = verify(api, side(near(voice), 12.0), {"profile_id": profile_id}).json()
     assert checked["band"] == "STRONG"
+
+
+class SignEmbedder:
+    """A stand-in model: one voice for audio with a positive mean, another for negative."""
+
+    def embed(self, samples):
+        return np.eye(EMBEDDING_DIM, dtype=np.float32)[0 if samples.mean() > 0 else 1]
+
+
+@pytest.fixture
+def audio_api(services, tmp_path, monkeypatch):
+    class KeepAll:  # every frame is speech, as in tests/test_extract.py
+        def __init__(self, mode):
+            pass
+
+        def is_speech(self, pcm, rate):
+            return True
+
+    monkeypatch.setattr("svs.extract.webrtcvad.Vad", KeepAll)
+    rng = np.random.default_rng(1)
+    noise = 0.05 * rng.standard_normal(16000 * 20)
+    # 0-10 s one voice (mean +0.2), 10-20 s another (mean -0.2).
+    audio = np.concatenate([noise[:160000] + 0.2, noise[160000:] - 0.2]).astype(np.float32)
+    sf.write(tmp_path / "call.wav", audio, 16000, subtype="FLOAT")
+    services.embedder = SignEmbedder()
+    services.audio_root = tmp_path
+    return TestClient(create_app(services))
+
+
+def embed(api, segments, uri="call.wav"):
+    item = {"id": "aud_1:S1", "audio_uri": uri, "segments": segments, "purpose": "OCCURRENCE"}
+    return api.post("/v1/embed", json={"model_version": MODEL_VERSION, "items": [item]})
+
+
+def test_embed_returns_a_unit_embedding_with_speech_and_quality(audio_api):
+    out = embed(audio_api, [[0, 4000], [5000, 9000]]).json()
+    (result,) = out["results"]
+    assert result["usable"] is True
+    assert result["net_speech_seconds"] == pytest.approx(8.0)
+    assert set(result["quality_detail"]) == {
+        "snr_db",
+        "speech_ratio",
+        "clipping_ratio",
+        "bandwidth_hz",
+        "turn_consistency",
+    }
+    assert result["quality"] == pytest.approx(quality(**result["quality_detail"]))
+    assert np.linalg.norm(decode_embedding(result["embedding"])) == pytest.approx(1.0)
+    assert out["request_id"].startswith("req_")
+
+
+def test_embed_marks_two_voices_in_one_speaker_unusable(audio_api):
+    (result,) = embed(audio_api, [[0, 5000], [12000, 17000]]).json()["results"]
+    assert result["quality_detail"]["turn_consistency"] == pytest.approx(0.0)
+    assert result["usable"] is False
+    assert result["unusable_reason"] == "E_SV_TURN_INCONSISTENT"
+
+
+def test_embed_under_3_seconds_has_no_embedding(audio_api):
+    (result,) = embed(audio_api, [[0, 2500]]).json()["results"]
+    assert result["embedding"] is None
+    assert result["unusable_reason"] == "E_SV_INSUFFICIENT_SPEECH"
+
+
+@pytest.mark.parametrize("uri", ["missing.wav", "../call.wav", "/etc/passwd"])
+def test_embed_reads_only_files_under_the_audio_root(audio_api, uri):
+    response = embed(audio_api, [[0, 4000]], uri=uri)
+    assert response.status_code == 422
+    assert response.json()["error"] == "E_SV_INVALID_REQUEST"
+
+
+def test_embed_refuses_segments_outside_the_audio(audio_api):
+    response = embed(audio_api, [[0, 25000]])
+    assert response.json()["error"] == "E_SV_INVALID_REQUEST"
+    assert "aud_1:S1" in response.json()["message"]
+
+
+@needs_model
+def test_embed_with_the_real_model_matches_svs_embed(audio_api, services):
+    services.embedder = Embedder()
+    (result,) = embed(audio_api, [[0, 4000]]).json()["results"]
+    audio, rate = sf.read(services.audio_root / "call.wav", dtype="float32")
+    expected = services.embedder.embed(audio[:64000])
+    assert np.allclose(decode_embedding(result["embedding"]), expected, atol=1e-5)
