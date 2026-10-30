@@ -1440,3 +1440,87 @@ service endpoints (D15).
 30. The exact pool count costs 24 ms p95 on the whole 151,174 pool. An approximate count
     would be cheaper, but the tier then rests on an estimate. Which?
 31. A numeric margin threshold (choice 44) needs duplicate-profile data: internal data.
+
+## 2026-10-30 — D15: the service
+
+Handbook D15: FastAPI, five endpoints, idempotency keys, request_id and model_version on
+every response, the error codes of SVS guide §3.8. SVS guide §3.1-3.8.
+
+- `svs.api` (91179fa … 155bd9a): `POST /v1/embed`, `/v1/verify`, `/v1/identify`,
+  `/v1/profiles`, `PATCH /v1/profiles/{id}`, plus `GET /v1/healthz`. Every response has
+  `request_id` and `model_version` in the body (and `X-Request-ID` as a header, also on
+  responses FastAPI builds itself). Errors are `{error, message, retryable}`.
+- verify: raw cosine, AS-Norm score, band, `threshold_used` and the operating-point row
+  behind it (name, condition, bucket, pool, FAR, recall, precision, EER, trials, cohort).
+- identify wraps `svs.retrieve.identify` (D14): `searched` = candidate_pool, pool_tier,
+  recall_stage_k, rescored; latency split count / recall / exact.
+- profiles: enrol makes a PROVISIONAL profile; CONFIRMED on enrol runs the evidence rule
+  and is refused; update only at STRONG, then promotes when the rule holds.
+- Idempotency-Key on both profile calls: a retry with the same key and body returns the
+  first response (same request_id, header `Idempotent-Replayed: true`) and writes
+  nothing.
+- M2 left-over closed: the 3.0 s refusal is now a service test (verify and identify,
+  2.9 s refused, 3.0 s scored; also short audio against a long profile).
+- Each guard has a test that fails when it is removed (checked for the idempotency
+  lookup, the key fingerprint, the duplicate-occurrence check and the 3.0 s check).
+  313 tests.
+- `make service` builds the image and starts it with Qdrant; `make smoke` calls the five
+  endpoints once on VoxCeleb1 audio. One run (Mac, Docker, 2026-10-30): id10001 enrolled
+  from 7w0IBEWc9Qw/00001 (26.16 s); its 1zcIwhmdeo4/00002 (8.24 s) verifies STRONG
+  (9.89), id10002 0_laIeN-Q44/00001 NO_MATCH (−5.00); 2.0 s refused; identify MATCH,
+  pool 1; update at PROBABLE refused, at STRONG accepted (2 sessions, 34.4 s, rule
+  missing evidence_seconds). A demonstration, not a measurement.
+
+**Choices where the handbook and the SVS guide are silent** (the mentor may disagree):
+
+48. The five endpoints are the five with request examples in guide §3.2-3.6. The §3.7
+    endpoints are not built (healthz only).
+49. verify and identify take `net_speech_seconds` with each embedding, not the
+    condition's `duration_bucket` (§3.3): the service then picks the bucket, and the
+    3.0 s refusal cannot be skipped by naming a bucket. verify uses the shorter side's
+    bucket, as the trial list does.
+50. The condition block is `{codec, sample_rate}` → table condition: pcm 16 k → pcm16k,
+    pcm 8 k → pcm8k, g711a / g711u / g729 at 8 k, opus at 16 k. The noise conditions
+    have no codec name and cannot be asked for. Anything else → E_SV_UNKNOWN_CONDITION.
+51. No condition block → the condition with the highest STRONG threshold in the bucket
+    over all pool tiers, and a warning (§3.3 "most conservative").
+52. verify (1:1) uses the smallest pool tier (1,000): one profile is compared.
+53. A profile's AS-Norm statistics are against the clean cohort, cached when it is
+    written (choice 39); the query side uses its condition's cohort.
+54. Profile state is in the Qdrant payload: `sum_vec` (base64 float64), `sum_w`,
+    occurrences with their embeddings, `source` as a list of sources seen, `first_seen`,
+    `sessions`, `cohesion`, `attributes`. There is no occurrence collection yet
+    (item 22). `last_seen` is the server time of the write.
+55. Enrol takes a `source` (the identify filter needs one; the §3.5 example has none).
+56. Idempotency keys live in process memory, the 10,000 newest kept; an error is not
+    remembered, so a fixed request can reuse its key. The same key with another body
+    → `E_SV_IDEMPOTENCY_KEY_REUSED`. One lock serialises every write, so two updates of
+    one profile cannot lose each other. One uvicorn worker.
+57. The same `audio_id` + `speaker_ref` twice in one profile → `E_SV_DUPLICATE_OCCURRENCE`:
+    its seconds would count twice towards the 120 s.
+58. Codes not in §3.8: `E_SV_INVALID_REQUEST` (malformed body or embedding),
+    `E_SV_IDEMPOTENCY_KEY_REUSED`, `E_SV_DUPLICATE_OCCURRENCE` (and D14's
+    `E_SV_FILTER_REQUIRED`). The guide gives no HTTP statuses: 422 for a request to
+    change, 409 for version mismatch and conflicts, 404 not found, 503 store down.
+59. Embeddings must arrive unit length (± 1e-3) and are not re-normalised (§4.1).
+60. `min_band` shortens the candidate list only; the decision uses every candidate. The
+    §3.4 example lists a WEAK candidate under `min_band: PROBABLE`, so the guide's
+    meaning is unclear. Default WEAK.
+61. `last_seen_after` needs a time zone (D14 choice 43); the §3.4 example's
+    `"2026-05-01"` is refused.
+62. embed: `audio_uri` is a path under `CFG_SV_AUDIO_ROOT` (no object store); each
+    segment is a turn; turns of ≥ 3.0 s give the turn consistency (as in D10); under
+    3.0 s pooled there is no embedding; one bad item fails the whole call.
+
+**Open items for the mentor**
+
+32. M3 asks for `docker compose up` on the mentor's machine. The model (`make model`,
+    25 MB, checksum) downloads from a clean clone; the eight cohorts (37 MB) need
+    VoxCeleb1 + VoxCeleb2 and, for the codecs, the home PC. Commit the cohort files, or
+    hand them over separately?
+33. Profile-side statistics against the clean cohort (choice 53) are not measured on
+    degraded queries: D7 normalised both sides with the condition's cohort.
+34. Idempotency keys are lost on restart and not shared between workers. A real
+    deployment needs them in a shared store. Which one does SVS use?
+35. Not built: §3.7 endpoints (GET profile, operating-points, model-info, readyz),
+    `E_SV_INDEX_BUILDING`, the `coverage` note and `searched.filtered_out` of §3.4.
