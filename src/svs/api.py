@@ -9,20 +9,22 @@ their arguments, and their results and exceptions back into JSON.
 import base64
 import binascii
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
 
 import numpy as np
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from numpy.typing import NDArray
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from svs.asnorm import cohort_stats
-from svs.bands import band, tier_rows
+from svs.bands import NO_MATCH, band
 from svs.embed import EMBEDDING_DIM, MODEL_VERSION
+from svs.optable import BAND_ORDER
 from svs.profile import EnrolRuleUnmet, UnusableOccurrence, UpdateBandTooLow
-from svs.retrieve import FilterRequired
+from svs.retrieve import RECALL_K, TOP_K, FilterRequired, IdentifyFilter, identify
 from svs.store import ModelVersionMismatch, ProfileStore
 from svs.trials import MIN_SPEECH_SECONDS, duration_bucket
 
@@ -106,6 +108,26 @@ class VerifyRequest(BaseModel):
     condition: Condition | None = None
 
 
+class Filter(BaseModel):
+    """The §3.4 filter. last_seen_after needs a time zone, e.g. 2026-05-01T00:00:00Z."""
+
+    source: list[str]
+    last_seen_after: datetime
+    status: list[str] = ["CONFIRMED", "PROVISIONAL"]
+    min_evidence_seconds: float = 0.0
+
+
+class IdentifyRequest(BaseModel):
+    model_version: str
+    embedding: str
+    net_speech_seconds: float
+    # Optional here so that a missing filter gets its own code, not E_SV_INVALID_REQUEST.
+    filter: Filter | None = None
+    top_k: int = Field(TOP_K, ge=1, le=RECALL_K)
+    min_band: str = "WEAK"  # the lowest band listed among the candidates
+    condition: Condition | None = None
+
+
 def decode_embedding(text: str) -> NDArray[np.float32]:
     """Base64 little-endian float32[192] (§3.1), checked to be finite and unit length.
 
@@ -144,12 +166,12 @@ def check_speech(seconds: float) -> None:
 
 
 def resolve_condition(
-    condition: Condition | None, seconds: float, table: dict, pool: int
+    condition: Condition | None, seconds: float, table: dict
 ) -> tuple[str, list[str]]:
     """The table's condition name for the request, and any warning to return with it.
 
     Without a condition block the call gets the condition whose STRONG threshold is the
-    highest for this bucket and pool: the most conservative one (§3.3).
+    highest in this bucket, over all pool tiers: the most conservative one (§3.3).
     """
     if condition is not None:
         name = CONDITIONS.get((condition.codec.lower(), condition.sample_rate))
@@ -160,8 +182,10 @@ def resolve_condition(
             )
         return name, []
     bucket = duration_bucket(seconds)
-    names = [name for name, b in table if b == bucket]
-    name = max(names, key=lambda c: float(tier_rows(seconds, c, table, pool)[0]["threshold"]))
+    name = max(
+        (c for c, b in table if b == bucket),
+        key=lambda c: max(float(rows[0]["threshold"]) for rows in table[(c, bucket)].values()),
+    )
     return name, [f"no condition given: thresholds of {name}, the most conservative"]
 
 
@@ -218,7 +242,7 @@ def verify(services: Services, req: VerifyRequest) -> dict:
         )
     seconds = min(req.left.net_speech_seconds, right_seconds)
     check_speech(seconds)
-    name, warnings = resolve_condition(req.condition, seconds, services.table, VERIFY_POOL)
+    name, warnings = resolve_condition(req.condition, seconds, services.table)
     cohort = services.cohorts[name]
     (mu_l,), (sd_l,) = cohort_stats(left[None, :], cohort)
     if mu_r is None:
@@ -251,6 +275,58 @@ def error(request: Request, code: str, message: str) -> JSONResponse:
     return reply(request, {"error": code, "message": message, "retryable": retryable}, status)
 
 
+def identify_one(services: Services, req: IdentifyRequest) -> dict:
+    """1:N (§3.4) through svs.retrieve.identify: filter, pool count, two stages, decision.
+
+    The decision is made on every ranked candidate; min_band only shortens the list the
+    caller sees. searched tells "nobody matched" apart from "almost nothing was searched".
+    """
+    check_version(req.model_version)
+    if req.filter is None:
+        raise FilterRequired("identify needs a filter; an unfiltered search is refused")
+    if req.min_band not in (*BAND_ORDER, NO_MATCH):
+        raise ServiceError("E_SV_INVALID_REQUEST", f"min_band {req.min_band!r} is not a band")
+    query = decode_embedding(req.embedding)
+    check_speech(req.net_speech_seconds)
+    name, warnings = resolve_condition(req.condition, req.net_speech_seconds, services.table)
+    query_filter = IdentifyFilter(
+        source=tuple(req.filter.source),
+        last_seen_after=req.filter.last_seen_after,
+        status=tuple(req.filter.status),
+        min_evidence_seconds=req.filter.min_evidence_seconds,
+    )
+    found = identify(
+        store_of(services),
+        req.model_version,
+        query,
+        req.net_speech_seconds,
+        name,
+        services.cohorts[name],
+        services.table,
+        query_filter,
+        req.top_k,
+    )
+    shown = (*BAND_ORDER, NO_MATCH)[: (*BAND_ORDER, NO_MATCH).index(req.min_band) + 1]
+    return {
+        "candidates": [asdict(c) for c in found.candidates if c.band in shown],
+        "decision": found.decision,
+        "decision_profile_id": found.decision_profile_id,
+        "searched": {
+            "candidate_pool": found.candidate_pool,
+            "pool_tier": found.pool_tier,
+            "recall_stage_k": RECALL_K,
+            "rescored": found.rescored,
+        },
+        "condition": name,
+        "latency_ms": {
+            "count": found.count_ms,
+            "recall": found.recall_ms,
+            "exact": found.exact_ms,
+        },
+        "warnings": warnings,
+    }
+
+
 def create_app(services: Services) -> FastAPI:
     app = FastAPI(title="Speaker verification service", version=MODEL_VERSION)
     app.state.svs = services
@@ -279,6 +355,10 @@ def create_app(services: Services) -> FastAPI:
     @app.get("/v1/healthz")
     def healthz(request: Request) -> JSONResponse:
         return reply(request, {"status": "ok"})
+
+    @app.post("/v1/identify")
+    def identify_endpoint(request: Request, body: IdentifyRequest) -> JSONResponse:
+        return reply(request, identify_one(services, body))
 
     @app.post("/v1/verify")
     def verify_endpoint(request: Request, body: VerifyRequest) -> JSONResponse:

@@ -211,3 +211,73 @@ def test_a_body_with_a_missing_field_is_an_invalid_request(api):
 def test_every_request_condition_is_in_the_operating_point_table():
     calibrated = {condition for condition, _ in read_table()}
     assert set(CONDITIONS.values()) <= calibrated
+
+
+NORTH = {"source": ["cc_north"], "last_seen_after": "2026-01-01T00:00:00Z"}
+
+
+def identify(api, vector, seconds=12.0, filter=NORTH, **extra):
+    body = {
+        "model_version": MODEL_VERSION,
+        "embedding": encode_embedding(vector),
+        "net_speech_seconds": seconds,
+        "condition": PCM16K,
+        **extra,
+    }
+    if filter is not None:
+        body["filter"] = filter
+    return api.post("/v1/identify", json=body)
+
+
+@pytest.fixture
+def profiles(services):
+    vectors = unit(5)
+    for i, vector in enumerate(vectors):
+        add_profile(services, f"spk_{i}", vector, 200.0)
+    return vectors
+
+
+def test_identify_finds_the_profile_and_gives_a_margin(api, profiles):
+    out = identify(api, profiles[2], min_band="NO_MATCH").json()
+    assert out["decision"] == "MATCH"
+    assert out["decision_profile_id"] == "spk_2"
+    first, second = out["candidates"][:2]
+    assert first["profile_id"] == "spk_2"
+    assert first["band"] == "STRONG"
+    assert first["margin_to_next"] == pytest.approx(
+        first["normalised_score"] - second["normalised_score"]
+    )
+    assert out["searched"]["candidate_pool"] == 5
+    assert out["request_id"].startswith("req_")
+
+
+def test_identify_without_a_filter_is_refused(api, profiles):
+    for missing in (None, {**NORTH, "source": []}):
+        response = identify(api, profiles[0], filter=missing)
+        assert response.status_code == 422
+        assert response.json()["error"] == "E_SV_FILTER_REQUIRED"
+
+
+def test_identify_refuses_a_date_without_a_time_zone(api, profiles):
+    response = identify(api, profiles[0], filter={**NORTH, "last_seen_after": "2026-01-01"})
+    assert response.json()["error"] == "E_SV_FILTER_REQUIRED"
+
+
+def test_identify_on_an_empty_pool_says_nothing_was_searched(api, profiles):
+    out = identify(api, profiles[0], filter={**NORTH, "source": ["cc_south"]}).json()
+    assert out["candidates"] == []
+    assert out["decision"] == "NO_MATCH"
+    assert out["searched"]["candidate_pool"] == 0
+
+
+def test_identify_refuses_under_3_seconds_of_speech(api, profiles):
+    response = identify(api, profiles[0], seconds=2.5)
+    assert response.json()["error"] == "E_SV_INSUFFICIENT_SPEECH"
+
+
+def test_min_band_shortens_the_list_but_not_the_decision(api, profiles):
+    everything = identify(api, profiles[1], min_band="NO_MATCH").json()
+    strong_only = identify(api, profiles[1], min_band="STRONG").json()
+    assert len(everything["candidates"]) == 5
+    assert [c["band"] for c in strong_only["candidates"]] == ["STRONG"]
+    assert strong_only["decision"] == everything["decision"] == "MATCH"

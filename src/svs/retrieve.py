@@ -175,6 +175,7 @@ class Identification:
     decision_profile_id: str | None  # set only for MATCH
     candidate_pool: int  # profiles the filter keeps
     pool_tier: int  # the pool size whose thresholds gave the bands
+    rescored: int  # best exact cosines kept for AS-Norm, at most RECALL_K
     count_ms: float
     recall_ms: float
     exact_ms: float
@@ -241,6 +242,7 @@ def identify(
         profile_id,
         pool,
         tier,
+        len(ranked.rescored),
         count_ms,
         ranked.recall_ms,
         ranked.exact_ms,
