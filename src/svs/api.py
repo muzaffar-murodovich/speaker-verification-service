@@ -11,7 +11,9 @@ import binascii
 import hashlib
 import json
 import math
+import os
 import threading
+import time
 import uuid
 from collections import OrderedDict
 from dataclasses import asdict, dataclass, field
@@ -25,12 +27,14 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from numpy.typing import NDArray
 from pydantic import BaseModel, Field
+from qdrant_client import QdrantClient
+from qdrant_client.http.exceptions import ResponseHandlingException
 
 from svs.asnorm import cohort_stats
-from svs.bands import NO_MATCH, band
+from svs.bands import NO_MATCH, OPTABLE, band, read_table
 from svs.embed import EMBEDDING_DIM, MODEL_VERSION, Embedder
 from svs.extract import load_audio, speech_from_samples
-from svs.optable import BAND_ORDER, CLEAN
+from svs.optable import BAND_ORDER, CLEAN, cohort_of
 from svs.profile import (
     CONFIRMED,
     MIN_UPDATE_BAND,
@@ -626,6 +630,43 @@ def idempotent(
         return response
 
 
+COHORT_DIR = Path("artifacts/cohort")
+# Seconds the service waits for Qdrant at start, e.g. while docker compose starts both.
+STORE_WAIT = 60
+
+
+def load_services() -> Services:
+    """The model, the operating-point table, each condition's cohort and the profile store.
+
+    CFG_SV_QDRANT_URL and CFG_SV_AUDIO_ROOT come from the environment. The profile
+    collection of this model version is created if it does not exist (svs.store main).
+    """
+    table = read_table(OPTABLE)
+    conditions = {condition for condition, _ in table}
+    cohorts = {
+        c: np.load(COHORT_DIR / f"{cohort_of(c)}.npz")["embeddings"] for c in sorted(conditions)
+    }
+    client = QdrantClient(url=os.environ.get("CFG_SV_QDRANT_URL", "http://localhost:6333"))
+    store = ProfileStore(client)
+    for attempt in range(STORE_WAIT):
+        try:
+            exists = client.collection_exists(store.collection)
+            break
+        except ResponseHandlingException:
+            if attempt == STORE_WAIT - 1:
+                raise
+            time.sleep(1)
+    if not exists:
+        store.create()
+    root = Path(os.environ.get("CFG_SV_AUDIO_ROOT", "data"))
+    return Services(store, table, cohorts, embedder=Embedder(), audio_root=root)
+
+
+def service() -> FastAPI:
+    """The app uvicorn runs: uvicorn svs.api:service --factory."""
+    return create_app(load_services())
+
+
 def create_app(services: Services) -> FastAPI:
     app = FastAPI(title="Speaker verification service", version=MODEL_VERSION)
     app.state.svs = services
@@ -645,6 +686,10 @@ def create_app(services: Services) -> FastAPI:
 
     for coded_exception in CODED:
         app.add_exception_handler(coded_exception, coded)
+
+    @app.exception_handler(ResponseHandlingException)
+    async def store_down(request: Request, exc: ResponseHandlingException) -> JSONResponse:
+        return error(request, "E_SV_STORE_UNAVAILABLE", f"vector store unreachable: {exc}")
 
     @app.exception_handler(RequestValidationError)
     async def invalid(request: Request, exc: RequestValidationError) -> JSONResponse:

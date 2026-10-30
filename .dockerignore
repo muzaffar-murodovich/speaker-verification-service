@@ -1,0 +1,8 @@
+# The build needs only pyproject.toml, uv.lock, README.md, src/ and the operating points.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+!docs/operating-points.tsv
+**/__pycache__

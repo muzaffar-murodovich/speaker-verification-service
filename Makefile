@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm eer-conditions degraded-cohorts degraded-asnorm-scores eer-conditions-asnorm operating-points operating-points-conditions operating-points-table quality quality-eval profile-eval det det-conditions qdrant store retrieval-bench base-rate test lint format eval clean
+.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm eer-conditions degraded-cohorts degraded-asnorm-scores eer-conditions-asnorm operating-points operating-points-conditions operating-points-table quality quality-eval profile-eval det det-conditions qdrant service smoke store retrieval-bench base-rate test lint format eval clean
 
 help: ## Show available targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -244,6 +244,13 @@ det-conditions: ## DET per condition on AS-Norm scores, one plot per bucket
 qdrant: ## Start Qdrant in Docker (docker-compose.yml), wait until it answers
 	docker compose up -d qdrant
 	until curl -sf localhost:6333/ > /dev/null; do sleep 1; done
+
+service: ## Build and start Qdrant + the API (docker-compose.yml), wait until it answers on :8000
+	docker compose up -d --build
+	until curl -sf localhost:8000/v1/healthz > /dev/null; do sleep 1; done
+
+smoke: ## Call all five endpoints of the running service once, on VoxCeleb1 audio
+	uv run python -m svs.smoke
 
 store: qdrant ## Create the profile collection for the current model version
 	uv run python -m svs.store

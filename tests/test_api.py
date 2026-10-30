@@ -527,3 +527,12 @@ def test_embed_with_the_real_model_matches_svs_embed(audio_api, services):
     audio, rate = sf.read(services.audio_root / "call.wav", dtype="float32")
     expected = services.embedder.embed(audio[:64000])
     assert np.allclose(decode_embedding(result["embedding"]), expected, atol=1e-5)
+
+
+def test_an_unreachable_store_is_503_and_retryable(services):
+    services.store = ProfileStore(QdrantClient(url="http://localhost:1", timeout=1))
+    api = TestClient(create_app(services))
+    response = verify(api, side(unit(1)[0], 12.0), {"profile_id": "spk_a"})
+    assert response.status_code == 503
+    assert response.json()["error"] == "E_SV_STORE_UNAVAILABLE"
+    assert response.json()["retryable"] == "yes"
