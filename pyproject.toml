@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 # Runtime dependencies are added on the day they are first used (audio/VAD on D2, ONNX model on D3).
 dependencies = [
+    "fastapi>=0.162.0",
     "kaldi-native-fbank>=1.22.3",
     "matplotlib>=3.11.2",
     "numpy>=1.26",
@@ -13,11 +14,13 @@ dependencies = [
     "qdrant-client==1.19.1",
     "scipy>=1.11",
     "soundfile>=0.12",
+    "uvicorn>=0.54.0",
     "webrtcvad-wheels>=2.0.14",
 ]
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "pytest>=8",
     "ruff>=0.6",
 ]
