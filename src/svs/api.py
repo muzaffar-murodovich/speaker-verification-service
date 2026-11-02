@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse, Response
 from numpy.typing import NDArray
 from prometheus_client import CONTENT_TYPE_LATEST
 from pydantic import BaseModel, Field
-from qdrant_client import QdrantClient
+from qdrant_client import QdrantClient, models
 from qdrant_client.http.exceptions import ResponseHandlingException
 
 from svs.asnorm import cohort_stats
@@ -549,6 +549,31 @@ def save_profile(services: Services, profile: Profile, payload: dict) -> None:
         "sum_w": profile.sum_w,
     }
     store_of(services).upsert(MODEL_VERSION, profile.profile_id, profile.centroid, payload)
+    # One occurrence is its own centroid: its cohesion is 1.0 and says nothing.
+    if len(profile.occurrences) >= 2:
+        services.metrics.cohesion.observe(profile.cohesion)
+
+
+def count_profiles(services: Services) -> None:
+    """Set the profile gauge from the store. If the store is down, the gauge is left empty:
+    a missing number, not the last one seen, so it cannot pass for a current count.
+    """
+    gauge = services.metrics.profiles
+    gauge.clear()
+    if services.store is None:
+        return
+
+    def of(status: str) -> models.Filter:
+        return models.Filter(
+            must=[models.FieldCondition(key="status", match=models.MatchValue(value=status))]
+        )
+
+    try:
+        counts = {s: services.store.count(MODEL_VERSION, of(s)) for s in (PROVISIONAL, CONFIRMED)}
+    except ResponseHandlingException:
+        return
+    for status, n in counts.items():
+        gauge.labels(status).set(n)
 
 
 def load_profile(services: Services, profile_id: str) -> tuple[Profile, dict]:
@@ -729,6 +754,7 @@ def create_app(services: Services) -> FastAPI:
     # Outside /v1: a scraper's path, plain text, not part of the JSON API.
     @app.get("/metrics")
     def metrics_endpoint() -> Response:
+        count_profiles(services)
         return Response(services.metrics.text(), media_type=CONTENT_TYPE_LATEST)
 
     @app.post("/v1/embed")

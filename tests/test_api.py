@@ -399,6 +399,27 @@ def test_a_strong_update_from_a_second_recording_promotes(api, services):
     assert payload["sum_w"] == pytest.approx(local.sum_w)
 
 
+def test_metrics_count_profiles_by_status_and_observe_cohesion(api, services):
+    voice, other = unit(2)
+    promoted = enrol(api, occurrence(near(voice), "aud_1")).json()["profile_id"]
+    patch(api, promoted, occurrence(near(voice), "aud_2"))
+    enrol(api, occurrence(other, "aud_3"))
+    assert metric(api, 'svs_profiles{status="PROVISIONAL"}') == 1
+    assert metric(api, 'svs_profiles{status="CONFIRMED"}') == 1
+    # Only the two-occurrence write is observed; the two one-occurrence enrols are not.
+    assert metric(api, "svs_profile_cohesion_count") == 1
+    vector, payload = services.store.get(MODEL_VERSION, promoted)
+    assert metric(api, "svs_profile_cohesion_sum") == pytest.approx(payload["cohesion"])
+
+
+def test_metrics_answer_without_a_profile_count_when_the_store_is_down(services):
+    # Port 9 (discard): nothing listens, the same error as a Qdrant that is down.
+    services.store = ProfileStore(QdrantClient(url="http://127.0.0.1:9", timeout=1))
+    response = TestClient(create_app(services)).get("/metrics")
+    assert response.status_code == 200
+    assert "svs_profiles{" not in response.text
+
+
 def test_the_same_occurrence_twice_is_refused(api):
     voice = unit(1)[0]
     profile_id = enrol(api, occurrence(voice, "aud_1")).json()["profile_id"]

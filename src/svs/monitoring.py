@@ -5,7 +5,7 @@ history, so this process only counts since it started. Each Metrics has its own 
 so two apps in one process (the tests) do not add to each other's counts.
 """
 
-from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, generate_latest
 
 
 class Metrics:
@@ -44,6 +44,17 @@ class Metrics:
             "svs_decisions",
             "Bands given: verify's band, or identify's top band with its decision",
             ["call", "band", "decision"],
+            registry=self.registry,
+        )
+        # Counted in the store each time /metrics is read, not kept in this process.
+        self.profiles = Gauge(
+            "svs_profiles", "Profiles in the store, by status", ["status"], registry=self.registry
+        )
+        # Edges at CFG_SV_COHESION_ALERT (0.55) and CFG_SV_PROMOTE_MIN_COHESION (0.65).
+        self.cohesion = Histogram(
+            "svs_profile_cohesion",
+            "Cohesion of a profile with two or more occurrences, each time it is written",
+            buckets=(0.3, 0.4, 0.5, 0.55, 0.6, 0.65, 0.7, 0.8, 0.9, 1.0),
             registry=self.registry,
         )
 
