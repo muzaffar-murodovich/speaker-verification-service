@@ -344,6 +344,8 @@ def verify(services: Services, req: VerifyRequest) -> dict:
     z_right = (raw - mu_r) / (sd_r + 1e-6)
     score = 0.5 * (z_left + z_right)
     name_of_band, row = band(score, seconds, name, services.table, VERIFY_POOL)
+    # A 1:1 call has a band and no decision of its own.
+    services.metrics.decisions.labels("verify", name_of_band, "none").inc()
     return {
         "raw_score": raw,
         "normalised_score": score,
@@ -397,6 +399,13 @@ def identify_one(services: Services, req: IdentifyRequest) -> dict:
         query_filter,
         req.top_k,
     )
+    metrics = services.metrics
+    stages = {"count": found.count_ms, "recall": found.recall_ms, "exact": found.exact_ms}
+    for stage, ms in stages.items():
+        metrics.identify_seconds.labels(stage).observe(ms / 1e3)
+    metrics.identify_pool.observe(found.candidate_pool)
+    top = found.candidates[0].band if found.candidates else NO_MATCH
+    metrics.decisions.labels("identify", top, found.decision).inc()
     shown = (*BAND_ORDER, NO_MATCH)[: (*BAND_ORDER, NO_MATCH).index(req.min_band) + 1]
     return {
         "candidates": [asdict(c) for c in found.candidates if c.band in shown],

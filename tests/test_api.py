@@ -294,6 +294,21 @@ def test_min_band_shortens_the_list_but_not_the_decision(api, profiles):
     assert strong_only["decision"] == everything["decision"] == "MATCH"
 
 
+def test_metrics_count_identify_stages_pools_and_decisions(api, profiles):
+    identify(api, profiles[2])  # pool 5, MATCH
+    identify(api, profiles[0], filter={**NORTH, "source": ["cc_south"]})  # pool 0
+    identify(api, profiles[0], seconds=2.5)  # refused: no decision, nothing timed
+    verify(api, side(profiles[1], 12.0), side(profiles[1], 12.0))
+    for stage in ("count", "recall", "exact"):
+        assert metric(api, f'svs_identify_duration_seconds_count{{stage="{stage}"}}') == 2
+    assert metric(api, 'svs_identify_pool_size_bucket{le="0.0"}') == 1
+    assert metric(api, 'svs_identify_pool_size_bucket{le="10.0"}') == 2
+    decisions = "svs_decisions_total{"
+    assert metric(api, decisions + 'band="STRONG",call="identify",decision="MATCH"}') == 1
+    assert metric(api, decisions + 'band="NO_MATCH",call="identify",decision="NO_MATCH"}') == 1
+    assert metric(api, decisions + 'band="STRONG",call="verify",decision="none"}') == 1
+
+
 def occurrence(vector, audio_id, seconds=61.9, quality=0.78, speaker_ref="S1"):
     return {
         "audio_id": audio_id,
