@@ -1532,3 +1532,61 @@ with `cohorts/cohorts.sha256`; the image copies them, so `make service` needs on
 `make model`. Tests: each file matches its recorded SHA-256, and each keeps the committed
 list's members in order (degraded cohorts drop the 2-67 members left under 3.0 s).
 `make smoke` after the change: the same scores as before (9.89 STRONG, −5.00 NO_MATCH).
+
+## 2026-11-02 — D18: /metrics, the weekly cohesion check, the runbook
+
+Done before D16-D17: those need the internal slice (T2), which waits for the mentor's
+reply on access and on what the slice contains. No code freeze yet: D16-D17 may still
+change the code. Handbook D18 and M4; SVS guide §8.5, §11.1, §11.2.
+
+- `GET /metrics` (bbba5d6, d0b2e6c, 18ee895), Prometheus text format, names of guide
+  §11.1. The handbook's six: `svs_embed_duration_seconds` {model_version, purpose},
+  `svs_embed_rejected_total` {reason}, `svs_identify_duration_seconds` {stage},
+  `svs_decisions_total` {call, band, decision}, `svs_profiles` {status},
+  `svs_profile_cohesion`. Also `svs_identify_pool_size` (the runbook's first check for
+  slow identify). Each has a test that fails when its counting line is removed.
+- `make cohesion-check` (03b3de2): reads every profile's stored cohesion, appends one
+  line to `artifacts/cohesion/history.tsv` (profiles, checked, p05, median, below 0.55,
+  share below), writes the profiles below 0.55 to `review-<date>.tsv`, prints `ALERT`
+  when the share below is larger than at the last check.
+- `docs/runbook.md` (80ed594): seven symptoms in the §11.2 format, each tied to a
+  `/metrics` name or a command.
+- One run (Mac, Docker, 2026-11-02): `make service`, `make smoke` (same scores as D15:
+  9.89 STRONG, −5.00 NO_MATCH), then `/metrics`: 4 embed items, 1 refused
+  E_SV_INSUFFICIENT_SPEECH; identify count / recall / exact 3.6 / 4.1 / 5.1 ms (pool 1);
+  decisions verify STRONG, verify NO_MATCH, identify STRONG MATCH; profiles 14
+  PROVISIONAL, 1 CONFIRMED (the Qdrant volume keeps profiles written before today);
+  cohesion 0.951 for the smoke profile's two-occurrence update. `make cohesion-check`:
+  15 profiles, 10 with two or more occurrences, p05 0.9159, median 0.9497, none below
+  0.55. A demonstration, not a measurement. 327 tests.
+
+**Choices where the handbook and the SVS guide are silent** (the mentor may disagree):
+
+63. `prometheus-client` for the format; the path is `/metrics` (handbook), outside `/v1`.
+    Each app has its own registry, so tests do not add to each other's counts.
+64. Embed duration is per item, not per call. Rejections are the usability gate's codes;
+    a malformed request (E_SV_INVALID_REQUEST) is not a rejection and is not counted.
+65. Identify stages are count, recall, exact: the guide names recall and exact; count is
+    D14's exact pool count, which costs time too (item 30). Bucket edges include 120 ms,
+    the §11.1 alert.
+66. `svs_decisions_total` has a `call` label the guide does not have: verify gives a band
+    and no decision (`decision="none"`); identify gives its top candidate's band
+    (`NO_MATCH` when nothing was searched) and its decision. Refused calls are not
+    counted.
+67. `svs_profiles` is counted exactly in Qdrant when `/metrics` is read. When Qdrant is
+    down the gauge is left out rather than showing the last count.
+68. `svs_profile_cohesion` is observed at each write of a profile with two or more
+    occurrences, so a profile updated often is observed often. The per-profile
+    distribution is the weekly check's job.
+69. The weekly alert is any rise in the share below 0.55 since the last check. No minimum
+    change: a person reads the review list.
+70. D18 before D16-D17 (order changed, T2 not yet available).
+
+**Open items for the mentor**
+
+36. Guide Appendix A: below 0.55 a profile's updates are suspended. The weekly check
+    lists such profiles; PATCH does not refuse them yet. Should it?
+37. Not built from §11.1: confirmations (no analyst feedback here), merge candidates (no
+    merge queue), store latency, version coverage, attribute cross-check.
+38. Is "any rise" right for the cohesion alert, or should it need a minimum change or a
+    minimum number of profiles?
