@@ -514,6 +514,23 @@ def test_embed_reads_only_files_under_the_audio_root(audio_api, uri):
     assert response.json()["error"] == "E_SV_INVALID_REQUEST"
 
 
+def metric(api, line_start: str) -> float:
+    """The value of the one /metrics line that starts with line_start."""
+    (line,) = [x for x in api.get("/metrics").text.splitlines() if x.startswith(line_start)]
+    return float(line.rsplit(" ", 1)[1])
+
+
+def test_metrics_count_embed_items_and_the_reasons_they_were_refused(audio_api):
+    embed(audio_api, [[0, 4000], [5000, 9000]])  # usable
+    embed(audio_api, [[0, 2500]])  # 2.5 s of speech
+    embed(audio_api, [[0, 2000]])
+    labels = f'model_version="{MODEL_VERSION}",purpose="OCCURRENCE"'
+    assert metric(audio_api, f"svs_embed_duration_seconds_count{{{labels}}}") == 3
+    rejected = 'svs_embed_rejected_total{reason="E_SV_INSUFFICIENT_SPEECH"}'
+    assert metric(audio_api, rejected) == 2
+    assert "E_SV_LOW_QUALITY" not in audio_api.get("/metrics").text
+
+
 def test_embed_refuses_segments_outside_the_audio(audio_api):
     response = embed(audio_api, [[0, 25000]])
     assert response.json()["error"] == "E_SV_INVALID_REQUEST"

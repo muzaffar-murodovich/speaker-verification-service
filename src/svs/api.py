@@ -24,8 +24,9 @@ from typing import Literal
 import numpy as np
 from fastapi import FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from numpy.typing import NDArray
+from prometheus_client import CONTENT_TYPE_LATEST
 from pydantic import BaseModel, Field
 from qdrant_client import QdrantClient
 from qdrant_client.http.exceptions import ResponseHandlingException
@@ -34,6 +35,7 @@ from svs.asnorm import cohort_stats
 from svs.bands import NO_MATCH, OPTABLE, band, read_table
 from svs.embed import EMBEDDING_DIM, MODEL_VERSION, Embedder
 from svs.extract import load_audio, speech_from_samples
+from svs.monitoring import Metrics
 from svs.optable import BAND_ORDER, CLEAN, cohort_of
 from svs.profile import (
     CONFIRMED,
@@ -135,6 +137,7 @@ class Services:
     idempotency: Idempotency = field(default_factory=Idempotency)
     embedder: Embedder | None = None
     audio_root: Path | None = None  # CFG_SV_AUDIO_ROOT: audio_uri paths are inside it
+    metrics: Metrics = field(default_factory=Metrics)
 
 
 class Condition(BaseModel):
@@ -473,7 +476,18 @@ def embed(services: Services, req: EmbedRequest) -> dict:
     check_version(req.model_version)
     if services.embedder is None:
         raise RuntimeError("the service was started without the embedding model")
-    return {"results": [embed_item(services.embedder, services.audio_root, i) for i in req.items]}
+    metrics = services.metrics
+    results = []
+    for item in req.items:
+        start = time.perf_counter()
+        result = embed_item(services.embedder, services.audio_root, item)
+        metrics.embed_seconds.labels(MODEL_VERSION, item.purpose).observe(
+            time.perf_counter() - start
+        )
+        if not result["usable"]:
+            metrics.embed_rejected.labels(result["unusable_reason"]).inc()
+        results.append(result)
+    return {"results": results}
 
 
 def occurrence_of(occ: OccurrenceIn) -> Occurrence:
@@ -702,6 +716,11 @@ def create_app(services: Services) -> FastAPI:
     @app.get("/v1/healthz")
     def healthz(request: Request) -> JSONResponse:
         return reply(request, {"status": "ok"})
+
+    # Outside /v1: a scraper's path, plain text, not part of the JSON API.
+    @app.get("/metrics")
+    def metrics_endpoint() -> Response:
+        return Response(services.metrics.text(), media_type=CONTENT_TYPE_LATEST)
 
     @app.post("/v1/embed")
     def embed_endpoint(request: Request, body: EmbedRequest) -> JSONResponse:
