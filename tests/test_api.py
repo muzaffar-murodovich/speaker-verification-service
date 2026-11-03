@@ -550,6 +550,13 @@ def test_embed_reads_only_files_under_the_audio_root(audio_api, uri):
     assert response.json()["error"] == "E_SV_INVALID_REQUEST"
 
 
+def test_embed_refuses_a_file_it_cannot_decode(audio_api, tmp_path):
+    (tmp_path / "call.g729").write_bytes(b"not a format libsndfile knows")
+    response = embed(audio_api, [[0, 4000]], uri="call.g729")
+    assert response.status_code == 422
+    assert response.json()["error"] == "E_SV_INVALID_REQUEST"
+
+
 def metric(api, line_start: str) -> float:
     """The value of the one /metrics line that starts with line_start."""
     (line,) = [x for x in api.get("/metrics").text.splitlines() if x.startswith(line_start)]

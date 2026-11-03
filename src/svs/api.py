@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Literal
 
 import numpy as np
+import soundfile as sf
 from fastapi import FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
@@ -448,7 +449,9 @@ def embed_item(embedder: Embedder, root: Path | None, item: EmbedItem) -> dict:
         audio, rate = load_audio(audio_path(root, item.audio_uri), item.channel)
         pooled = speech_from_samples(audio, rate, item.segments)
         turns = [speech_from_samples(audio, rate, [segment]) for segment in item.segments]
-    except ValueError as exc:  # bad segments, channel or audio, as svs.extract words it
+    # Bad segments, channel or audio, as svs.extract words it; LibsndfileError is a file
+    # libsndfile cannot decode (a codec it lacks), which is the caller's to convert.
+    except (ValueError, sf.LibsndfileError) as exc:
         raise ServiceError("E_SV_INVALID_REQUEST", f"item {item.id}: {exc}") from exc
     turn_embeddings = [
         embedder.embed(t.samples) for t in turns if t.net_speech_seconds >= MIN_SPEECH_SECONDS
