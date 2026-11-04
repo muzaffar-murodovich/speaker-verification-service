@@ -9,6 +9,7 @@ In a stereo recording, the left-channel speaker is channel 0 and the right is ch
 """
 
 import json
+from collections import Counter
 from pathlib import Path
 
 import soundfile as sf
@@ -33,7 +34,10 @@ def merged(segments: list[tuple[float, float]], length_ms: float) -> list[tuple[
 
 
 def read_export(path: Path, files: list[dict], root: Path) -> dict:
-    """{audio: {"channels", "speakers": {speaker_id: [(start_ms, end_ms)]}}} per file.
+    """{audio: {"channels", "speakers": {speaker_id: [(start_ms, end_ms)]}, "genders"}}.
+
+    genders is the annotator's gender label of each speaker, the most common over its
+    segments: a label, not a measurement (there is no gender classifier here).
 
     files is slice_run's files.tsv; an exported item without a readable file is left out.
     The length comes from the file under root: files.tsv rounds seconds to 1 ms, and a
@@ -48,14 +52,27 @@ def read_export(path: Path, files: list[dict], root: Path) -> dict:
         info = sf.info(root / f["audio"])
         length_ms = info.frames * 1000 / info.samplerate
         speakers: dict[str, list[tuple[float, float]]] = {}
+        genders: dict[str, Counter] = {}
         for seg in item["segments"]:
             span = (float(seg["start"]) * 1000, float(seg["end"]) * 1000)
             speakers.setdefault(seg["speaker_id"], []).append(span)
+            gender = (seg.get("metadata") or {}).get("gender") or ""
+            genders.setdefault(seg["speaker_id"], Counter())[gender] += 1
         reference[f["audio"]] = {
             "channels": int(f["channels"]),
             "speakers": {k: merged(v, length_ms) for k, v in speakers.items()},
+            "genders": {k: v.most_common(1)[0][0] for k, v in genders.items()},
         }
     return reference
+
+
+def item_genders(reference: dict) -> dict[str, str]:
+    """The annotator's gender label per reference_manifest item_id."""
+    return {
+        f"{audio}#ref{k}": ref["genders"][speaker_id]
+        for audio, ref in reference.items()
+        for k, speaker_id in enumerate(ref["speakers"])
+    }
 
 
 def reference_manifest(reference: dict) -> list[dict]:

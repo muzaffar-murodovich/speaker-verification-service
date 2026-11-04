@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tinglash roʻyxati</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --card: #ffffff; --text: #1d1d1b; --muted: #6b6b66; --line: #deded8;
+    --yes: #1f7a4d; --no: #b3261e; --unsure: #8a6d00; --focus: #2f5fd0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161615; --card: #20201e; --text: #ecece8; --muted: #a3a39c; --line: #3a3a36;
+      --yes: #4cc38a; --no: #f07a70; --unsure: #e2c046; --focus: #7aa2ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 96px; }
+  h1 { font-size: 24px; margin: 0 0 8px; }
+  .help { color: var(--muted); margin: 0 0 4px; }
+  .help b { color: var(--text); }
+  .bar {
+    position: sticky; top: 0; z-index: 2; background: var(--bg);
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+    padding: 12px 0; border-bottom: 1px solid var(--line); margin: 16px 0 24px;
+  }
+  .bar .count { font-weight: 600; margin-right: auto; }
+  button {
+    font: inherit; cursor: pointer; border-radius: 8px; padding: 6px 14px;
+    border: 1px solid var(--line); background: var(--card); color: var(--text);
+  }
+  button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .group {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px; margin-bottom: 20px;
+  }
+  .group-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; }
+  .group-head h2 { font-size: 18px; margin: 0; }
+  .group-head .meta { color: var(--muted); font-size: 14px; margin-right: auto; }
+  .clip {
+    display: grid; grid-template-columns: 2.5em 1fr auto; gap: 8px 12px; align-items: center;
+    padding: 12px 0; border-top: 1px solid var(--line); margin-top: 12px;
+  }
+  .clip .n { font-weight: 600; color: var(--muted); }
+  .clip audio { width: 100%; min-width: 0; }
+  .clip .who { grid-column: 2 / 4; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+  .choices { display: flex; gap: 6px; }
+  .choices button[aria-pressed="true"][data-v="yes"] { background: var(--yes); border-color: var(--yes); color: #fff; }
+  .choices button[aria-pressed="true"][data-v="no"] { background: var(--no); border-color: var(--no); color: #fff; }
+  .choices button[aria-pressed="true"][data-v="unsure"] { background: var(--unsure); border-color: var(--unsure); color: #fff; }
+  .clip.playing { background: color-mix(in srgb, var(--focus) 10%, transparent); border-radius: 8px; }
+  @media (max-width: 560px) {
+    .clip { grid-template-columns: 2em 1fr; }
+    .choices { grid-column: 1 / 3; }
+    .choices button { flex: 1; }
+    .clip .who { grid-column: 1 / 3; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tinglash roʻyxati</h1>
+  <p class="help">Har bir guruhda bitta odam boʻlishi mumkin: score'lari baland, lekin hali hech kim tinglab tasdiqlamagan.</p>
+  <p class="help"><b>1.</b> Guruhdagi boʻlaklarni tinglang (<b>Guruhni ketma-ket tinglash</b> hammasini birin-ketin qoʻyadi).</p>
+  <p class="help"><b>2.</b> Har bir boʻlak uchun tanlang: <b>Ha</b> — guruhdagi koʻpchilik bilan bir odam; <b>Yoʻq</b> — boshqa odam; <b>Bilmayman</b>.</p>
+  <p class="help">Ikki boʻlakli guruhda: bir odam boʻlsa, ikkalasiga <b>Ha</b>; har xil odam boʻlsa, ikkalasiga <b>Yoʻq</b>.</p>
+  <p class="help"><b>3.</b> Oxirida <b>Natijani yuklab olish</b>ni bosing va faylni menga bering. Tanlovlar shu brauzerda saqlanib turadi.</p>
+
+  <div class="bar">
+    <span class="count" id="count"></span>
+    <button id="download">Natijani yuklab olish</button>
+    <button id="clear">Tozalash</button>
+  </div>
+  <div id="groups"></div>
+</main>
+
+<script>
+const ROWS = /*ROWS*/[];
+// Saved answers belong to this exact list: a new list starts empty.
+const KEY = "svs-listen:" + ROWS.map(r => r.item_id).join("|");
+const LABELS = { yes: "Ha", no: "Yoʻq", unsure: "Bilmayman" };
+
+let answers = {};
+try { answers = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { answers = {}; }
+function save() { try { localStorage.setItem(KEY, JSON.stringify(answers)); } catch (e) {} }
+
+function el(tag, attrs = {}, ...kids) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") node.className = v; else node.setAttribute(k, v);
+  }
+  for (const kid of kids) node.append(kid);
+  return node;
+}
+
+const groups = new Map();
+for (const r of ROWS) {
+  if (!groups.has(r.group)) groups.set(r.group, []);
+  groups.get(r.group).push(r);
+}
+
+const root = document.getElementById("groups");
+for (const [g, rows] of groups) {
+  const card = el("section", { class: "group" });
+  const play = el("button", { type: "button" }, "Guruhni ketma-ket tinglash");
+  card.append(el("div", { class: "group-head" },
+    el("h2", {}, `${Number(g) + 1}-guruh`),
+    el("span", { class: "meta" }, `${rows.length} ta boʻlak · annotator belgisi: ${rows[0].gender === "F" ? "ayol" : rows[0].gender === "M" ? "erkak" : "—"}`),
+    play));
+  const players = [];
+  rows.forEach((r, i) => {
+    const audio = el("audio", { controls: "", preload: "none", src: r.clip });
+    players.push(audio);
+    const choices = el("div", { class: "choices", role: "group", "aria-label": `${i + 1}-boʻlak` });
+    for (const v of ["yes", "no", "unsure"]) {
+      const b = el("button", { type: "button", "data-v": v, "aria-pressed": String(answers[r.item_id] === v) }, LABELS[v]);
+      b.addEventListener("click", () => {
+        answers[r.item_id] = answers[r.item_id] === v ? undefined : v;
+        if (!answers[r.item_id]) delete answers[r.item_id];
+        for (const other of choices.children) other.setAttribute("aria-pressed", String(answers[r.item_id] === other.dataset.v));
+        save(); update();
+      });
+      choices.append(b);
+    }
+    const row = el("div", { class: "clip" },
+      el("span", { class: "n" }, `${i + 1}.`), audio, choices,
+      el("span", { class: "who" }, `${r.seconds} s · ${r.item_id}`));
+    audio.addEventListener("play", () => {
+      document.querySelectorAll("audio").forEach(a => { if (a !== audio) a.pause(); });
+      row.classList.add("playing");
+    });
+    audio.addEventListener("pause", () => row.classList.remove("playing"));
+    audio.addEventListener("ended", () => row.classList.remove("playing"));
+    card.append(row);
+  });
+  play.addEventListener("click", () => {
+    let k = 0;
+    const next = () => {
+      if (k >= players.length) return;
+      const a = players[k++];
+      a.currentTime = 0;
+      a.addEventListener("ended", next, { once: true });
+      a.play();
+    };
+    next();
+  });
+  root.append(card);
+}
+
+function update() {
+  const done = ROWS.filter(r => answers[r.item_id]).length;
+  document.getElementById("count").textContent = `${ROWS.length} ta boʻlakdan ${done} tasi belgilandi`;
+}
+update();
+
+document.getElementById("download").addEventListener("click", () => {
+  const fields = ["group", "item_id", "clip", "seconds", "gender", "same_person"];
+  const lines = [fields.join("\t")].concat(ROWS.map(r =>
+    fields.map(f => f === "same_person" ? (answers[r.item_id] || "") : r[f]).join("\t")));
+  const blob = new Blob([lines.join("\n") + "\n"], { type: "text/tab-separated-values" });
+  const a = el("a", { href: URL.createObjectURL(blob), download: "listen.tsv" });
+  document.body.append(a); a.click(); a.remove();
+});
+
+document.getElementById("clear").addEventListener("click", () => {
+  if (!confirm("Hamma tanlovlar oʻchiriladi. Davom etasizmi?")) return;
+  answers = {}; save(); location.reload();
+});
+</script>
+</body>
+</html>
