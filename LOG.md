@@ -1657,3 +1657,51 @@ file; 0 failures after.
     (`CFG_SV_MIN_TURN_CONSISTENCY`) too high for this audio, or do these turns hold crosstalk?
 41. A whole stereo channel is one turn, so its turn consistency is always 1.0: the gate
     cannot see a second voice there. The labelled turns could replace the whole channel.
+
+### D16 (cont.): same-person candidates across recordings
+
+The mentor does not know whether one person appears in several recordings; we find out.
+`make slice-link` (`svs.slice_link`) scores every pair of the 217 usable reference
+occurrences as `/v1/verify` does (AS-Norm, no condition → most conservative of the
+bucket; pool 216 → tier 1,000).
+
+| Pairs | n | STRONG | PROBABLE | WEAK | NO_MATCH |
+|---|---|---|---|---|---|
+| inside one recording (two different people) | 109 | 39 | 3 | 3 | 64 |
+| across recordings | 23,327 | 2,571 | 1,303 | 548 | 18,905 |
+
+Two different people in one call reach STRONG in 39 of 109 pairs (stereo 19 of 30,
+median raw cosine 0.484; mono 20 of 79, 0.289). The conditions picked were pcm16k (most
+pairs), noise5 and noise15: the slice's top-300 cohort mean is 0.28 with sd 0.051, so a
+raw 0.58 is already z ≈ 6. Linked at STRONG, 212 of 217 occurrences fell into one group.
+
+So the link threshold is the highest score inside one recording, 15.46: 31 pairs across
+recordings are above it. They form 12 groups of 2-6 (37 occurrences), none with mixed
+annotator gender labels. `artifacts/slice/listen/` holds a 10 s clip per occurrence
+(longest labelled segments, as recorded) and `listen.tsv` an empty `same_person` column.
+
+**Choices**
+
+76. Reference segments, not the diarizer's, for linking: a diarization error would join
+    two people.
+77. Link threshold = the highest pair inside one recording, measured on this slice. Those
+    pairs share a line (and crosstalk in stereo), so two people in two recordings should
+    score lower; not shown.
+78. Clips are as recorded (no VAD), so a listener hears pauses and the line.
+
+**Open items for the mentor**
+
+42. The operating points do not hold on this audio: STRONG is reached by 36% of known
+    different-people pairs (63% in stereo). Every band on the slice is unreliable until
+    there are thresholds measured on audio like it. Crosstalk in the stereo channels is
+    one likely cause; the cohort (VoxCeleb2) is another.
+
+**Listening** (the user, 2026-11-04, `listen.html` → `artifacts/slice/listen-answers.tsv`):
+37 clips: 26 yes, 9 no, 2 unsure. Groups 7, 9 and 10 (pairs) are two different people
+each. Confirmed: **9 people in 26 occurrences** (2-4 recordings each), so **27 target
+trials** across recordings. Of the 31 links above 15.46: 20 join one person, 8 touch a
+"no", 3 cannot be told (unsure). One link in four is wrong even at this threshold.
+
+43. 27 target trials are too few to measure: one trial moves an EER by 3.7 points. An
+    EER on this slice is an indication, not a measurement. A larger labelled slice with
+    speaker ids across recordings would fix it; the export cannot.
