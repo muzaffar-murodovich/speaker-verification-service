@@ -91,16 +91,23 @@ def speech_from_samples(
         if not len(chunk):
             raise ValueError("Segment contains no samples at the target sample rate")
         selected_samples += len(chunk)
-        detector = webrtcvad.Vad(vad_mode)
-        for offset in range(0, len(chunk), FRAME_SAMPLES):
-            frame = chunk[offset : offset + FRAME_SAMPLES]
-            padded = np.pad(frame, (0, FRAME_SAMPLES - len(frame)))
-            pcm = (np.clip(padded, -1, 1) * 32767).astype("<i2").tobytes()
-            if detector.is_speech(pcm, SAMPLE_RATE):
-                speech.append(frame)
+        flags = speech_frames(chunk, vad_mode)
+        speech += [chunk[i * FRAME_SAMPLES : (i + 1) * FRAME_SAMPLES] for i in flags.nonzero()[0]]
 
     pooled = np.concatenate(speech).astype(np.float32) if speech else np.empty(0, np.float32)
     return ExtractedSpeech(pooled, selected_samples / SAMPLE_RATE)
+
+
+def speech_frames(audio: NDArray, vad_mode: int = 2) -> NDArray[np.bool_]:
+    """VAD decision per 20 ms frame of 16 kHz audio; the last frame may be partial."""
+    detector = webrtcvad.Vad(vad_mode)
+    flags = []
+    for offset in range(0, len(audio), FRAME_SAMPLES):
+        frame = audio[offset : offset + FRAME_SAMPLES]
+        padded = np.pad(frame, (0, FRAME_SAMPLES - len(frame)))
+        pcm = (np.clip(padded, -1, 1) * 32767).astype("<i2").tobytes()
+        flags.append(detector.is_speech(pcm, SAMPLE_RATE))
+    return np.array(flags, bool)
 
 
 def validate_segments(segments: Sequence[Sequence[float]], duration_ms: float) -> None:
