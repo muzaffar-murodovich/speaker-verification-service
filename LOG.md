@@ -1590,3 +1590,70 @@ change the code. Handbook D18 and M4; SVS guide §8.5, §11.1, §11.2.
     merge queue), store latency, version coverage, attribute cross-check.
 38. Is "any rise" right for the cohesion alert, or should it need a minimum change or a
     minimum number of profiles?
+
+## 2026-11-04 — D16: the labelled slice, a minimal diarizer, the pipeline over it
+
+The mentor gave the slice: 117 recordings (6.42 h; 93 mp3, 24 wav; 8, 16, 44.1 and
+48 kHz) and the labelling tool's JSON export, in `data/audio/` (gitignored). The export
+gives who spoke when inside each recording, checked by a reviewer (`status: accepted`).
+Its speaker ids are local to one recording: nothing says the same person appears in two.
+37 recordings are stereo (one speaker per channel); 80 are mono with two speakers (63)
+or three to five (17) in one channel. The team lead said diarization is not required;
+the mono files still need one speaker's segments per item, so a minimal one stands in
+(SVS guide §0.3, §1.1: SVS is called by the diarizer, not the reverse).
+
+- `svs.extract.speech_frames`: the VAD loop of `speech_from_samples` as its own function.
+  Same samples as before on 10 real files (`np.array_equal`).
+- `svs.diarize` and `make slice-diarize`: VAD frames → regions (gaps ≤ 0.3 s) → windows
+  of ≤ 1.5 s (≥ 0.5 s speech) → one transient embedding per window → Ward clustering
+  into 2 speakers → neighbouring windows of a speaker form a turn. Mono files get an
+  item per speaker, stereo files an item per channel. With `EXPORT`, it also writes the
+  reference manifest from the labels and DER per file.
+- `svs.slice_labels`: the export → reference segments (sorted, overlaps joined, clipped
+  to the file's true length) → `manifest-reference.tsv`.
+- `slice_run.segments_text` rounds segment edges inwards, and `make slice-run` takes
+  `OUT`, so two manifests' results do not overwrite each other.
+
+**DER** on the 80 mono files, 3.74 h of reference speech, 10 ms frames, no collar:
+
+| Clustering | DER | missed | false alarm | confusion |
+|---|---|---|---|---|
+| average linkage, cosine (first try) | 55.9% | 4.1% | 22.5% | 29.2% |
+| Ward | **34.1%** | 6.9% | 14.6% | 12.6% |
+
+The first try also scored the gaps inside turns as speech; the Ward row scores only the
+windows. 2-speaker files 33.5%, 3+ speaker files 36.2%.
+
+**The pipeline over the slice** (`make slice-run`, Mac):
+
+| Manifest | items | usable | E_SV_TURN_INCONSISTENT | E_SV_INSUFFICIENT_SPEECH |
+|---|---|---|---|---|
+| diarized: mono | 160 | 106 | 54 | 0 |
+| diarized: stereo (whole channel) | 74 | 74 | 0 | 0 |
+| reference: mono | 181 | 150 | 22 | 9 |
+| reference: stereo (labelled turns) | 74 | 67 | 7 | 0 |
+
+Median turn consistency: diarized mono 0.668, reference mono 0.695, reference stereo
+0.676. The first reference run failed 7 items: a segment clipped to `files.tsv`'s length
+(rounded to 1 ms) ended up to 0.5 ms past the audio. Fixed by reading the length from the
+file; 0 failures after.
+
+**Choices where the handbook and the SVS guide are silent** (the mentor may disagree):
+
+71. A diarizer at all, though the team lead said it is not required: without one, a mono
+    item would pool two voices. It stays minimal and lives outside the service.
+72. Two speakers per mono file, given, not estimated. Wrong for the 17 files with 3-5.
+73. Ward over average linkage: chosen on this slice's own labels (the only labels there
+    are), so its 34.1% is optimistic.
+74. DER with no collar, overlap counted, speakers paired by largest overlap.
+75. Stereo files are not diarized: one item per channel, whole length.
+
+**Open items for the mentor**
+
+39. Do the same people appear in more than one recording? D17 needs target trials across
+    recordings; the export's speaker ids cannot give them.
+40. On the reference segments, 12% of mono speakers (22 of 181) and 9% of stereo speakers
+    (7 of 74) are refused as inconsistent turns: real single speakers below 0.55. Is 0.55
+    (`CFG_SV_MIN_TURN_CONSISTENCY`) too high for this audio, or do these turns hold crosstalk?
+41. A whole stereo channel is one turn, so its turn consistency is always 1.0: the gate
+    cannot see a second voice there. The labelled turns could replace the whole channel.
