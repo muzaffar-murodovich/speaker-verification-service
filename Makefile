@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm eer-conditions degraded-cohorts degraded-asnorm-scores eer-conditions-asnorm operating-points operating-points-conditions operating-points-table quality quality-eval profile-eval det det-conditions qdrant service smoke cohesion-check slice-inspect slice-run store retrieval-bench base-rate test lint format eval clean
+.PHONY: help setup g729 model data musan cohort degraded-embeddings degraded-scores embeddings embeddings-videos trials duplicates scores asnorm-scores eer eer-asnorm eer-conditions degraded-cohorts degraded-asnorm-scores eer-conditions-asnorm operating-points operating-points-conditions operating-points-table quality quality-eval profile-eval det det-conditions qdrant service smoke cohesion-check slice-inspect slice-diarize slice-run store retrieval-bench base-rate test lint format eval clean
 
 help: ## Show available targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -258,11 +258,16 @@ cohesion-check: qdrant ## Weekly cohesion check of the profile store: left tail 
 
 # D16: SLICE=<folder of recordings>. Outputs go to artifacts/slice; run uses
 # artifacts/slice/manifest.tsv when MANIFEST is not given (one item per channel).
+# EXPORT=<labelling tool JSON> adds the reference manifest and DER; OUT=<folder> keeps
+# the results of two manifests apart.
 slice-inspect: ## Headers of every recording under SLICE: sample rate, channels, codec
 	uv run python -m svs.slice_run inspect $(SLICE)
 
+slice-diarize: $(MODEL) ## Diarize the mono files of SLICE: manifest-diarized.tsv (+ DER with EXPORT)
+	uv run python -m svs.diarize $(SLICE) $(if $(EXPORT),--export "$(EXPORT)")
+
 slice-run: $(MODEL) ## Embed every item of SLICE as /v1/embed does; results.tsv and embeddings.npz
-	uv run python -m svs.slice_run run $(SLICE) $(if $(MANIFEST),--manifest $(MANIFEST))
+	uv run python -m svs.slice_run run $(SLICE) $(if $(MANIFEST),--manifest $(MANIFEST)) $(if $(OUT),--out $(OUT))
 
 store: qdrant ## Create the profile collection for the current model version
 	uv run python -m svs.store

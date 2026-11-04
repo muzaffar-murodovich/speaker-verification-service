@@ -18,6 +18,7 @@ bug in this code, and stops the run.
 
 import argparse
 import csv
+import math
 from collections import Counter
 from pathlib import Path
 
@@ -117,6 +118,15 @@ def parse_segments(text: str) -> list[tuple[float, float]]:
         start, end = part.split("-")
         segments.append((float(start), float(end)))
     return segments
+
+
+def segments_text(segments: list[tuple[float, float]]) -> str:
+    """parse_segments reversed, in whole ms rounded inwards, so no end passes the audio.
+
+    A segment shorter than 1 ms can round to nothing; it is left out.
+    """
+    whole = [(math.ceil(s), math.floor(e)) for s, e in segments]
+    return ",".join(f"{s}-{e}" for s, e in whole if s < e)
 
 
 def whole_length(path: Path) -> list[tuple[float, float]]:
