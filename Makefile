@@ -272,6 +272,13 @@ slice-run: $(MODEL) ## Embed every item of SLICE as /v1/embed does; results.tsv 
 slice-link: ## Same-person candidates across recordings of SLICE, with clips to listen to
 	uv run python -m svs.slice_link $(SLICE) $(if $(EXPORT),--export "$(EXPORT)")
 
+# D17: needs EXPORT and the listener's answers (artifacts/slice/listen-answers.tsv).
+slice-breakdown: ## Band shares of known target and non-target pairs of SLICE, per breakdown axis
+	uv run python -m svs.slice_breakdown $(SLICE) --export "$(EXPORT)"
+
+slice-service: ## Enrol the confirmed people of the slice in the running service; identify the rest
+	uv run python -m svs.slice_service
+
 store: qdrant ## Create the profile collection for the current model version
 	uv run python -m svs.store
 

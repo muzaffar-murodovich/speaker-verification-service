@@ -6,6 +6,10 @@ with start, end (seconds) and speaker_id. Speaker ids are local to one recording
 spoke when inside a recording, and nothing about the same person across recordings.
 
 In a stereo recording, the left-channel speaker is channel 0 and the right is channel 1.
+
+source is the folder of the item's original file name (a region or a collection, e.g.
+"Qashqadaryo"): the only hint of where a call came from. The file name itself is not
+kept: some hold a phone number.
 """
 
 import json
@@ -34,10 +38,12 @@ def merged(segments: list[tuple[float, float]], length_ms: float) -> list[tuple[
 
 
 def read_export(path: Path, files: list[dict], root: Path) -> dict:
-    """{audio: {"channels", "speakers": {speaker_id: [(start_ms, end_ms)]}, "genders"}}.
+    """{audio: {"channels", "source", "speakers": {speaker_id: [(start_ms, end_ms)]},
+    "genders", "langs"}}.
 
     genders is the annotator's gender label of each speaker, the most common over its
-    segments: a label, not a measurement (there is no gender classifier here).
+    segments: a label, not a measurement (there is no gender classifier here). langs
+    counts the annotator's language label (UZ, RU, ...) over the speaker's segments.
 
     files is slice_run's files.tsv; an exported item without a readable file is left out.
     The length comes from the file under root: files.tsv rounds seconds to 1 ms, and a
@@ -53,15 +59,20 @@ def read_export(path: Path, files: list[dict], root: Path) -> dict:
         length_ms = info.frames * 1000 / info.samplerate
         speakers: dict[str, list[tuple[float, float]]] = {}
         genders: dict[str, Counter] = {}
+        langs: dict[str, Counter] = {}
         for seg in item["segments"]:
             span = (float(seg["start"]) * 1000, float(seg["end"]) * 1000)
             speakers.setdefault(seg["speaker_id"], []).append(span)
-            gender = (seg.get("metadata") or {}).get("gender") or ""
-            genders.setdefault(seg["speaker_id"], Counter())[gender] += 1
+            labels = seg.get("metadata") or {}
+            genders.setdefault(seg["speaker_id"], Counter())[labels.get("gender") or ""] += 1
+            langs.setdefault(seg["speaker_id"], Counter())[labels.get("lang") or ""] += 1
+        name = item.get("audio", {}).get("filename") or ""
         reference[f["audio"]] = {
             "channels": int(f["channels"]),
+            "source": name.rsplit("/", 1)[0] if "/" in name else "",
             "speakers": {k: merged(v, length_ms) for k, v in speakers.items()},
             "genders": {k: v.most_common(1)[0][0] for k, v in genders.items()},
+            "langs": langs,
         }
     return reference
 
@@ -70,6 +81,15 @@ def item_genders(reference: dict) -> dict[str, str]:
     """The annotator's gender label per reference_manifest item_id."""
     return {
         f"{audio}#ref{k}": ref["genders"][speaker_id]
+        for audio, ref in reference.items()
+        for k, speaker_id in enumerate(ref["speakers"])
+    }
+
+
+def item_labels(reference: dict) -> dict[str, dict]:
+    """Per reference_manifest item_id: its recording's source and its language counts."""
+    return {
+        f"{audio}#ref{k}": {"source": ref["source"], "langs": ref["langs"][speaker_id]}
         for audio, ref in reference.items()
         for k, speaker_id in enumerate(ref["speakers"])
     }
