@@ -1839,3 +1839,9 @@ same-gender pairs (1e-4).
     with speaker ids across calls for thresholds?
 45. Session gap and language cannot be measured on this slice (no dates, no Russian).
     A slice with call dates and caller/agent ids would give both.
+
+## 2026-11-05 — Code freeze, the technical report
+
+- Technical report: `docs/report.md` (handbook Appendix B), from this log and
+  experiments.csv; no new numbers.
+- Code freeze at tag `v1.0`. After it, only the report and this log may change.
