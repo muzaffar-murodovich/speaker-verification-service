@@ -1705,3 +1705,137 @@ trials** across recordings. Of the 31 links above 15.46: 20 join one person, 8 t
 43. 27 target trials are too few to measure: one trial moves an EER by 3.7 points. An
     EER on this slice is an indication, not a measurement. A larger labelled slice with
     speaker ids across recordings would fix it; the export cannot.
+
+### D16 (end): the slice through the running service
+
+Handbook D16 asks for the whole pipeline, so `make slice-service` (`svs.slice_service`,
+d5f60cd) sends the slice through the service in Docker (Mac, 2026-11-05, 7 min): the
+first occurrence of each of the 9 confirmed people is embedded (`/v1/embed`, the labelled
+segments) and enrolled (`/v1/profiles`) under a fresh source; every other usable
+occurrence is embedded and searched with `/v1/identify` in that source only (pool 9 →
+tier 1,000, no condition block → most conservative condition). Known queries are also
+verified against their own profile (`/v1/verify`).
+
+| queries | n | MATCH | REVIEW_REQUIRED | NO_MATCH |
+|---|---|---|---|---|
+| known (a confirmed person's other occurrences) | 17 | 2 (both right) | 15 | 0 |
+| unknown (recordings with no confirmed person) | 172 | 41 | 63 | 68 |
+
+- Known: the right profile is the top candidate in 17 of 17, and verify gives STRONG in
+  17 of 17 (these occurrences were found by score, so this is expected). Yet 15 end in
+  REVIEW_REQUIRED: a second profile also reaches PROBABLE or above (choice 44).
+- Unknown: 41 of 172 (24%) are assigned to one of 9 profiles, 24 at STRONG. One is
+  certainly wrong (the annotator gender differs from the profile's). The other 40 are
+  either people the listening did not confirm or false accepts; the 36% STRONG rate of
+  known different people (item 42) says most are false accepts.
+- Breaks found, in one line each: mono needs a diarizer (DER 34.1%); the 0.55 gate
+  refuses real single speakers (item 40); a whole stereo channel blinds the gate
+  (item 41); the operating points do not hold (item 42, and here: one wrong MATCH in four
+  unknown queries against a pool of 9). Labelled turns under 1 s: 789 of 6,152 (13%);
+  9 occurrences refused for under 3.0 s of speech.
+- Not examined: hold music (the labels mark speech only and the reference items use
+  labelled speech); code-switching (below: almost none in the labels).
+
+## 2026-11-05 — D17: breakdowns on the slice, and why it differs from VoxCeleb
+
+Handbook D17: duration × codec × sample rate × language × session gap × cross-source,
+compared with the public numbers, every gap explained. SVS guide §8.3.
+
+**What can be a trial here** (`make slice-breakdown`, `svs.slice_breakdown`, d5f60cd;
+`artifacts/slice/breakdown.tsv`). Only what is known about who is who, never a score:
+
+| kind | n | where from | fair? |
+|---|---|---|---|
+| target | 27 | the listener's "yes" clips of one group, two recordings | no: found by score (slice-link), so biased towards high scores |
+| same_recording | 109 | the two labelled speakers of one call | yes, but they share the line |
+| cross_gender | 11,597 | two recordings, different annotator gender | yes, and easier than same-gender |
+
+So the slice measures false accepts, not misses: an EER or FRR from 27 score-selected
+targets would be circular. Same-gender pairs from two recordings are left out: some may be
+one person.
+
+**Share at STRONG** (pool tier 1,000, where VoxCeleb calibrated STRONG at FAR 1e-4 on
+same-gender pairs; cross-gender pairs almost never pass there, D14):
+
+| scoring | target (biased) | same_recording | cross_gender |
+|---|---|---|---|
+| verify (as the service, no condition) | 27 / 27 | 39 / 109 (35.8%) | 187 / 11,597 (1.6%) |
+| pcm8k condition and cohort | 27 / 27 | 24 / 109 (22.0%) | 93 / 11,597 (0.8%) |
+
+Even the easy cross-gender pairs pass STRONG 80-160 times more often than VoxCeleb's
+same-gender pairs (1e-4).
+
+**Breakdowns** (verify scoring; STRONG share of the non-target pairs):
+
+| axis | value | same_recording | cross_gender |
+|---|---|---|---|
+| duration (shorter side) | 3-10 s | 0 / 8 | 1 / 520 (0.2%) |
+| | 10-30 s | 11 / 36 (31%) | 43 / 3,340 (1.3%) |
+| | 30-120 s | 27 / 62 (44%) | 139 / 7,467 (1.9%) |
+| | > 120 s | 1 / 3 | 4 / 270 (1.5%) |
+| format (codec) | mp3 both | 36 / 75 (48%) | 167 / 6,734 (2.5%) |
+| | wav both | 3 / 34 (9%) | 0 / 339 |
+| | mixed | — | 20 / 4,524 (0.4%) |
+| sample rate | 8 kHz both | 19 / 69 (28%) | 13 / 4,062 (0.3%) |
+| | wider both | 20 / 40 (50%) | 117 / 1,890 (6.2%) |
+| | mixed | — | 57 / 5,645 (1.0%) |
+| layout | stereo both | 19 / 30 (63%) | 56 / 982 (5.7%) |
+| | mono both | 20 / 79 (25%) | 97 / 5,590 (1.7%) |
+| source (folder) | same | 39 / 109 (36%) | 80 / 1,494 (5.4%) |
+| | different | — | 107 / 10,103 (1.1%) |
+
+- **Cross-source.** The export keeps each file's original folder (a region or a
+  collection: 10 folders, e.g. Qashqadaryo, Samarqand); it is the only source label there
+  is. Two different people from the same folder reach STRONG 5× as often as from two
+  folders (5.4% vs 1.1%). The embeddings carry the recording chain, not only the voice.
+  Of the 27 targets, 4 cross folders (2 people); all 4 are STRONG, but they are biased.
+- **Session gap**: not measurable. Only 8 of 117 file names carry a date, and none of the
+  confirmed people are in them.
+- **Language**: not measurable. Segment labels: UZ 6,151, RU 15, EN 5: the slice is
+  Uzbek. Code-switching, which the handbook expects, is almost absent from the labels.
+- **Duration**: longer audio gives *more* false accepts, as in D9 (thresholds rise with
+  duration in our table, item 17): a long same-line pair shares more of the line.
+- **Codec / sample rate**: the "wide" files (44.1-48 kHz mp3, by their bandwidth
+  telephone audio re-encoded) are the worst; real 8 kHz wav the best.
+
+**Why the slice differs from VoxCeleb** (one hypothesis per gap; tested where possible):
+
+1. *The cohort does not look like this audio* (tested, supported). The top-300 cohort
+   mean of a slice occurrence against the VoxCeleb2 pcm8k cohort is 0.278 (sd 0.051);
+   against the other slice occurrences the top-50 mean is 0.494 (sd 0.092). Every slice
+   voice sits closer to every other slice voice than to any VoxCeleb voice, so AS-Norm
+   inflates every slice score. Scoring with a slice cohort (other recordings, confirmed
+   people left out, top 50) moves 0 of 11,706 non-targets to STRONG, but also 26 of 27
+   targets below it: the VoxCeleb thresholds do not fit that scale either. A cohort and
+   thresholds from audio like this are needed together.
+2. *The wrong condition* (tested, partly). The pcm8k condition halves the false accepts
+   (35.8% → 22.0%, 1.6% → 0.8%), far from closing the gap.
+3. *A shared line and crosstalk* (supported by the breakdown, not isolated). Same-call
+   pairs pass 22-36%, stereo same-call 63%; same-folder pairs 5×.
+4. *Target behaviour* (not measurable): no unbiased targets.
+
+**Compared with VoxCeleb** (public numbers from D7-D14):
+
+| number | VoxCeleb1 | slice | hypothesis |
+|---|---|---|---|
+| STRONG false accepts, pool tier 1,000 | 1e-4 (same-gender, by construction) | 1.6% cross-gender, 35.8% same-call | 1, 2, 3 |
+| EER | 1.45-2.94% (3-10 s, pcm16k-pcm8k AS-Norm) | not measurable | 4 |
+| identify, known speaker right MATCH (pool 1,000) | 59.0% (D14) | 2 / 17 | the pool holds 9 people, yet REVIEW_REQUIRED takes 15: impostor profiles reach PROBABLE (1) |
+| identify, unknown speaker assigned | 23.3% STRONG + PROBABLE (D14, pool 1,000) | 41 / 172 (24%) against 9 profiles | 1, 3: on VoxCeleb that needed 1,000 profiles |
+
+**Choices where the handbook and the SVS guide are silent** (the mentor may disagree):
+
+79. Trials only from labels (listening, same call, annotator gender); no same-gender
+    cross-recording pair is called a non-target.
+80. Source = the export's original folder; the file name itself is never stored (some
+    hold a phone number).
+81. The slice-cohort scoring is a diagnostic, not a setting: its cohort holds the
+    evaluation audio's speakers.
+
+**Open items for the mentor**
+
+44. Production needs a cohort and thresholds from in-domain audio (hypothesis 1). Is
+    there unlabelled call-centre audio, with sources, for a cohort, and a labelled set
+    with speaker ids across calls for thresholds?
+45. Session gap and language cannot be measured on this slice (no dates, no Russian).
+    A slice with call dates and caller/agent ids would give both.

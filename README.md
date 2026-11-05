@@ -4,10 +4,12 @@ A speaker verification (1:1) and identification (1:N) service built during the
 MohirDev internship: speech extraction, ECAPA-TDNN embeddings, calibrated scoring,
 speaker profiles and vector search.
 
-**Status:** VoxCeleb1 evaluation, calibration per condition, profiles, 1:N search and
-the HTTP service are done (D1-D15), and so are the operations pieces of D18. Next is the
-internal call-centre slice (D16-D17). Progress, decisions and open questions are in
-[LOG.md](LOG.md); every reported number is a row of [experiments.csv](experiments.csv).
+**Status:** all four weeks are done (D1-D18): VoxCeleb1 evaluation, calibration per
+condition, profiles, 1:N search, the HTTP service, operations, and the internal
+call-centre slice (D16-D17), where the VoxCeleb operating points were found not to hold.
+The technical report is [docs/report.md](docs/report.md). Progress, decisions and open
+questions are in [LOG.md](LOG.md); every reported number is a row of
+[experiments.csv](experiments.csv).
 
 ## Quickstart
 
@@ -61,6 +63,22 @@ accept the dataset's terms on its page, then run `hf auth login` (or set `HF_TOK
 Without it the download fails with HTTP 401.
 
 Run `make` with no target to list all targets.
+
+## The internal slice
+
+The internal call-centre audio is not in this repository and never will be. With it in
+`data/audio/` (and the labelling tool's JSON export as `EXPORT`):
+
+```bash
+make slice-inspect SLICE=<folder>                 # headers: rate, channels, codec
+make slice-diarize SLICE=<folder> EXPORT=<json>   # minimal diarizer + DER
+make slice-run SLICE=<folder> MANIFEST=artifacts/slice/manifest-reference.tsv OUT=artifacts/slice/reference
+make slice-link SLICE=<folder> EXPORT=<json>      # same-person candidates + a local listening page
+make slice-breakdown SLICE=<folder> EXPORT=<json> # D17 band shares per axis
+make slice-service                                # the slice through the running service
+```
+
+Everything they write stays in `artifacts/slice/` (gitignored).
 
 ## Layout
 
