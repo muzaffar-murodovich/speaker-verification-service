@@ -1,5 +1,7 @@
 # Speaker Verification Service
 
+[![tests](https://github.com/muzaffar-murodovich/speaker-verification-service/actions/workflows/ci.yml/badge.svg)](https://github.com/muzaffar-murodovich/speaker-verification-service/actions/workflows/ci.yml)
+
 A service that answers two questions about a voice in call audio:
 
 - **Verify (1:1):** is this speech from the same person as this profile?

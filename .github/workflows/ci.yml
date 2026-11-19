@@ -1,0 +1,40 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # Ubuntu 24.04 ships bcg729 1.1.1 and ffmpeg 6.1.1, the versions the degraded
+    # embeddings were made with (LOG D6, open item 12).
+    runs-on: ubuntu-24.04
+    services:
+      qdrant:
+        image: qdrant/qdrant:v1.19.2
+        ports:
+          - 6333:6333
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System libraries (G.729 codec, ffmpeg)
+        run: sudo apt-get update && sudo apt-get install -y libbcg729-dev ffmpeg pkg-config
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install the project
+        run: make setup
+
+      - name: Lint
+        run: make lint
+
+      - name: Download the model (24 MB, checksum-verified)
+        run: make model
+
+      # The store tests skip when Qdrant is not reachable; wait so they run instead.
+      - name: Wait for Qdrant
+        run: curl -fsS --retry 30 --retry-delay 1 --retry-connrefused http://localhost:6333/readyz
+
+      - name: Tests
+        run: make test
