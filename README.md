@@ -1,15 +1,51 @@
 # Speaker Verification Service
 
-A speaker verification (1:1) and identification (1:N) service built during the
-MohirDev internship: speech extraction, ECAPA-TDNN embeddings, calibrated scoring,
-speaker profiles and vector search.
+A service that answers two questions about a voice in call audio:
 
-**Status:** all four weeks are done (D1-D18): VoxCeleb1 evaluation, calibration per
-condition, profiles, 1:N search, the HTTP service, operations, and the internal
-call-centre slice (D16-D17), where the VoxCeleb operating points were found not to hold.
-The technical report is [docs/report.md](docs/report.md). Progress, decisions and open
-questions are in [LOG.md](LOG.md); every reported number is a row of
-[experiments.csv](experiments.csv).
+- **Verify (1:1):** is this speech from the same person as this profile?
+- **Identify (1:N):** which enrolled profile, if any, is speaking?
+
+Each answer is a calibrated score, a band (STRONG / PROBABLE / WEAK / NO_MATCH) and the
+row of the operating-point table behind the band, so every decision states its
+measured false-accept rate. Built in four weeks (2026-09-29 to 2026-11-05) during the
+MohirDev internship, speaker verification track.
+
+**Stack:** WebRTC VAD, WeSpeaker ECAPA-TDNN (ONNX), AS-Norm score normalisation,
+Qdrant (HNSW recall + exact float64 rescore), FastAPI, Prometheus metrics, Docker Compose.
+
+## Results
+
+EER (equal error rate) on 549,856 VoxCeleb1 trials, AS-Norm scores, by the duration of
+the shorter clip and by audio condition. Telephone conditions are simulated: clean
+16 kHz audio is downsampled to 8 kHz and passed through the codec.
+
+| Duration | Clean 16 kHz | 8 kHz PCM | 8 kHz G.729 | Trials (target / non-target) |
+|---|---|---|---|---|
+| 3-10 s | 1.448 % | 2.941 % | 5.299 % | 50,000 / 100,000 |
+| 10-30 s | 0.582 % | 1.350 % | 2.488 % | 50,000 / 100,000 |
+| 30-120 s | 0.559 % | 1.249 % | 2.248 % | 46,754 / 100,000 |
+| > 120 s | 0.322 % | 0.806 % | 1.325 % | 3,102 / 100,000 |
+
+Trial counts are for clean audio; degraded conditions lose a few trials to the
+3-second minimum. All eight conditions (also G.711 A/μ-law, Opus, noise at 15 and 5 dB):
+
+![DET curves per condition and duration bucket](docs/figures/voxceleb1-det-conditions-d9.png)
+
+**What these numbers did not predict.** On real call-centre audio (an internal slice,
+117 recordings, not in this repository) the VoxCeleb operating points did not hold:
+35.8 % of different-speaker pairs from the same call scored STRONG, where the table
+promises 0.01 %. The cause I could test: every call-centre voice sits closer to every
+other call-centre voice than to any VoxCeleb voice, so a VoxCeleb cohort inflates the
+normalised score. Production needs a cohort and thresholds from in-domain audio.
+Details in [the technical report](docs/report.md), section 5.
+
+## Documents
+
+- [docs/report.md](docs/report.md): the technical report (design, results, what I got wrong)
+- [LOG.md](LOG.md): day-by-day decisions, dead ends and reasons
+- [experiments.csv](experiments.csv): one row per run that produced a reported number
+- [docs/operating-points.tsv](docs/operating-points.tsv): thresholds per condition × duration × pool size
+- [docs/runbook.md](docs/runbook.md): what to do when a metric alerts
 
 ## Quickstart
 
@@ -108,7 +144,7 @@ speech = extract_speech(
     segments=[(1200, 4400), (9100, 16300)],  # milliseconds
     channel=0,  # zero-based; omit only for mono audio
 )
-# speech.samples: mono float32 at 16 kHz, ready for D3
+# speech.samples: mono float32 at 16 kHz, ready for the embedding model
 print(speech.net_speech_seconds, speech.speech_ratio)
 ```
 
