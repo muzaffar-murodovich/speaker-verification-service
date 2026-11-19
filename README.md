@@ -159,3 +159,19 @@ VAD mode 2 is a baseline choice whose accuracy has not yet been measured.
 
 See [audio fundamentals](docs/audio-basics.md) for sample rates, codecs, clipping,
 channels and pooling.
+
+## License and third-party data
+
+The code is MIT ([LICENSE](LICENSE)), except [tools/g729.c](tools/g729.c), which links
+bcg729 and is GPL-3.0-only. Third-party parts:
+
+| Part | License | In this repository? |
+|---|---|---|
+| [bcg729](https://github.com/BelledonneCommunications/bcg729) (G.729 codec) | GPL-3.0-only | No: `make g729` builds against the system library; not in the Docker image |
+| [WeSpeaker](https://github.com/wenet-e2e/wespeaker) ECAPA-TDNN model | CC BY 4.0 | No: `make model` downloads it |
+| [VoxCeleb1 and VoxCeleb2](https://www.robots.ox.ac.uk/~vgg/data/voxceleb/) | CC BY 4.0 | VoxCeleb1 audio: no. `cohorts/` holds embeddings and speaker names derived from VoxCeleb2 |
+| [MUSAN](https://www.openslr.org/17/) noise | its own terms | No: `make musan` downloads it |
+
+VoxCeleb: A. Nagrani, J. S. Chung, A. Zisserman, "VoxCeleb: a large-scale speaker
+identification dataset", Interspeech 2017; J. S. Chung, A. Nagrani, A. Zisserman,
+"VoxCeleb2: Deep Speaker Recognition", Interspeech 2018.

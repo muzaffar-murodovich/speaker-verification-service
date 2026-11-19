@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only
+ * (this file links bcg729, which is GPL-3.0-only; the rest of the repository is MIT)
+ */
 /* G.729 round trip for the degradation harness: 8 kHz s16le on stdin -> encode
  * -> decode -> 8 kHz s16le on stdout. ffmpeg can decode G.729 but not encode it,
  * so this wraps the bcg729 library (Annex A codec, 8 kbit/s). Built by `make g729`.
